@@ -1,0 +1,20 @@
+# AWS Deployment Region
+aws_region = "eu-west-2"
+
+# Asset Pair to trade (e.g. SOLGBP, ETHGBP, XBTGBP)
+trading_pair = "SOLGBP"
+
+# Capital allocated per trade cycle in GBP
+allocated_capital_gbp = "48.00"
+
+# Target gross profit percentage per completed cycle
+profit_target_percent = "2.0"
+
+# Limit buy discount below best bid (Maker guarantee)
+buy_discount_percent = "0.2"
+
+# Dry run simulation mode (Set to false only when ready to execute with real money)
+dry_run = true
+
+# EventBridge execution frequency
+cron_schedule = "rate(5 minutes)"
