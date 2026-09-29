@@ -74,12 +74,27 @@ def display_status():
     
     state_color = GREEN if "PLACED" in current_state else YELLOW
     print(f"  Current State:     {BOLD}{state_color}{current_state}{RESET}")
-    print(f"  Active Order ID:   {active_order}")
-    print(f"  Last Entry Price:  £{last_buy}")
-    print(f"  Holding Volume:    {last_vol}")
-    print(f"  Target Sell Price: £{target_sell}")
+
+    if current_state == "SELL_PLACED":
+        entry = Decimal(last_buy)
+        target = Decimal(target_sell)
+        vol = Decimal(last_vol)
+        gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
+        net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
+        print(f"  Cycle Progress:    {BOLD}Phase 2/2 (Holding SOL, Limit Sell Active){RESET}")
+        print(f"  Active Sell Order: {active_order}")
+        print(f"  Entry Buy Price:   £{last_buy} ({last_vol} SOL)")
+        print(f"  Target Sell Price: £{target_sell}")
+        print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
+    elif current_state == "BUY_PLACED":
+        print(f"  Cycle Progress:    {BOLD}Phase 1/2 (Holding Cash, Limit Buy Active){RESET}")
+        print(f"  Active Buy Order:  {active_order}")
+        print(f"  Target Buy Price:  £{last_buy} ({last_vol} SOL)")
+    else:
+        print(f"  Active Order ID:   {active_order}")
+
     print(f"------------------------------------------------------------")
-    print(f"  Trades Completed:  {BOLD}{trades}{RESET}")
+    print(f"  Completed Cycles:  {BOLD}{trades}{RESET} (Round-trips buy & sell)")
     profit_color = GREEN if profit >= 0 else "\033[91m"
     print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:.4f}{RESET}")
 
