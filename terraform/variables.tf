@@ -43,5 +43,11 @@ variable "dry_run" {
 variable "cron_schedule" {
   description = "EventBridge cron expression or rate"
   type        = string
-  default     = "rate(5 minutes)"
+  default     = "rate(2 minutes)"
+}
+
+variable "alert_email" {
+  description = "Email address to receive order execution and profit notifications"
+  type        = string
+  default     = ""
 }

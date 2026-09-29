@@ -99,6 +99,14 @@ resource "aws_iam_policy" "lambda_policy" {
           "logs:PutLogEvents"
         ]
         Resource = "${aws_cloudwatch_log_group.lambda_logs.arn}:*"
+      },
+      {
+        Sid    = "SNSPublishAccess"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.trade_alerts.arn
       }
     ]
   })
@@ -115,7 +123,26 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
 }
 
 # -----------------------------------------------------------------------------
-# 4. Lambda Function
+# 4. Amazon SNS Trade Alert Topic
+# -----------------------------------------------------------------------------
+resource "aws_sns_topic" "trade_alerts" {
+  name = "kraken-trade-alerts"
+
+  tags = {
+    Project = "KrakenMicroTrader"
+    Managed = "Terraform"
+  }
+}
+
+resource "aws_sns_topic_subscription" "email_sub" {
+  count     = var.alert_email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.trade_alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# -----------------------------------------------------------------------------
+# 5. Lambda Function
 # -----------------------------------------------------------------------------
 resource "aws_lambda_function" "crypto_bot" {
   function_name    = "kraken-micro-trader"
@@ -138,6 +165,7 @@ resource "aws_lambda_function" "crypto_bot" {
       DYNAMODB_TABLE        = aws_dynamodb_table.bot_state.name
       SSM_PARAM_API_KEY     = "/crypto-bot/kraken-api-key"
       SSM_PARAM_API_SECRET  = "/crypto-bot/kraken-api-secret"
+      SNS_TOPIC_ARN         = aws_sns_topic.trade_alerts.arn
     }
   }
 

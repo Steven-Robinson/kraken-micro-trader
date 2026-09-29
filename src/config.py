@@ -38,6 +38,7 @@ AWS_REGION = os.getenv("AWS_REGION", "eu-west-1")  # Matching user's primary reg
 DYNAMODB_TABLE = os.getenv("DYNAMODB_TABLE", "kraken_bot_state")
 SSM_PARAM_API_KEY = os.getenv("SSM_PARAM_API_KEY", "/crypto-bot/kraken-api-key")
 SSM_PARAM_API_SECRET = os.getenv("SSM_PARAM_API_SECRET", "/crypto-bot/kraken-api-secret")
+SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN", "")
 
 
 def get_kraken_credentials() -> tuple[str, str]:

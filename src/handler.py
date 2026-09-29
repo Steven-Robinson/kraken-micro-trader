@@ -15,6 +15,7 @@ from config import (
     MAX_STALE_HOURS,
     PROFIT_TARGET_PERCENT,
     ROUND_TRIP_FEE_PERCENT,
+    SNS_TOPIC_ARN,
     TRADING_PAIR,
     get_kraken_credentials,
 )
@@ -23,6 +24,23 @@ from state_store import StateStore
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+def send_alert(subject: str, message: str) -> None:
+    """Send trade execution alert via Amazon SNS."""
+    if not SNS_TOPIC_ARN:
+        return
+    try:
+        import boto3
+        sns = boto3.client("sns", region_name=AWS_REGION)
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject=subject[:100],  # SNS subject max length is 100
+            Message=message,
+        )
+        logger.info("Sent SNS alert: %s", subject)
+    except Exception as e:
+        logger.error("Failed to send SNS alert: %s", e)
 
 
 def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal:
@@ -157,6 +175,17 @@ def _handle_buy_placed(
         store.save_state(state)
         logger.info("State transitioned to SELL_PLACED (Order ID: %s)", sell_txid)
 
+        send_alert(
+            f"[Kraken Micro-Trader] Buy Order Filled: {actual_volume} {TRADING_PAIR} @ £{actual_price}",
+            f"Your Limit Buy order on Kraken filled successfully!\n\n"
+            f"• Pair: {TRADING_PAIR}\n"
+            f"• Filled Amount: {actual_volume}\n"
+            f"• Buy Price: £{actual_price}\n"
+            f"• Total Cost: £{(actual_price * actual_volume):.2f}\n\n"
+            f"Next Action: Limit Sell order queued at target price £{sell_price} (+{PROFIT_TARGET_PERCENT}% net target).\n"
+            f"Active Order ID: {sell_txid}",
+        )
+
     elif status == "open":
         # Check if the order has been sitting unfilled too long
         order_age_hours = (time.time() - state.get("order_placed_at", time.time())) / 3600
@@ -230,6 +259,17 @@ def _handle_sell_placed(
         state["total_realized_profit_gbp"] = str(total_profit)
         state["order_placed_at"] = int(time.time())
         store.save_state(state)
+
+        send_alert(
+            f"[Kraken Micro-Trader] Profit Locked In! (+£{net_profit:.2f})",
+            f"Your Limit Sell order on Kraken filled successfully! 🚀\n\n"
+            f"• Sold: {volume} {TRADING_PAIR} @ £{sell_price}\n"
+            f"• Entry Price: £{buy_price}\n"
+            f"• Net Profit (After Fees): +£{net_profit:.4f}\n"
+            f"• Total Realized Profit to Date: £{total_profit:.4f} across {total_trades} trade(s)\n\n"
+            f"Next Action: Queued re-entry Limit Buy order at £{reentry_price} for {reentry_volume} {TRADING_PAIR}.\n"
+            f"Active Order ID: {buy_txid}",
+        )
 
     elif status == "open":
         logger.info("Sell order %s still open waiting for target price £%s.", txid, state.get("target_sell_price"))
