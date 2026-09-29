@@ -82,6 +82,20 @@ def display_status():
     print(f"  Trades Completed:  {BOLD}{trades}{RESET}")
     profit_color = GREEN if profit >= 0 else "\033[91m"
     print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:.4f}{RESET}")
+
+    # Fetch live 24h market volatility for transparency
+    try:
+        from kraken_client import KrakenClient
+        from volatility import compute_volatility_target
+        client = KrakenClient()
+        candles = client.get_ohlc("SOLGBP", interval=60)
+        target_pct, stats = compute_volatility_target(candles)
+        print(f"------------------------------------------------------------")
+        print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{stats.get('low_24h', '0')} - £{stats.get('high_24h', '0')})")
+        print(f"  Dynamic Target:    {BOLD}{GREEN}+{target_pct}%{RESET} (Range: 2.5% - 6.0%)")
+    except Exception:
+        pass
+
     print(f"{BOLD}{CYAN}============================================================{RESET}\n")
 
 

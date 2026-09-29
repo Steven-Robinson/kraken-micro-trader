@@ -163,9 +163,12 @@ resource "aws_lambda_function" "crypto_bot" {
       PROFIT_TARGET_PERCENT = var.profit_target_percent
       BUY_DISCOUNT_PERCENT  = var.buy_discount_percent
       DYNAMODB_TABLE        = aws_dynamodb_table.bot_state.name
-      SSM_PARAM_API_KEY     = "/crypto-bot/kraken-api-key"
-      SSM_PARAM_API_SECRET  = "/crypto-bot/kraken-api-secret"
-      SNS_TOPIC_ARN         = aws_sns_topic.trade_alerts.arn
+      SSM_PARAM_API_KEY         = "/crypto-bot/kraken-api-key"
+      SSM_PARAM_API_SECRET      = "/crypto-bot/kraken-api-secret"
+      SNS_TOPIC_ARN             = aws_sns_topic.trade_alerts.arn
+      DYNAMIC_TARGET_ENABLED    = tostring(var.dynamic_target_enabled)
+      MIN_PROFIT_TARGET_PERCENT = var.min_profit_target_percent
+      MAX_PROFIT_TARGET_PERCENT = var.max_profit_target_percent
     }
   }
 

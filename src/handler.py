@@ -12,7 +12,10 @@ from config import (
     BUY_DISCOUNT_PERCENT,
     DYNAMODB_TABLE,
     DRY_RUN,
+    DYNAMIC_TARGET_ENABLED,
+    MAX_PROFIT_TARGET_PERCENT,
     MAX_STALE_HOURS,
+    MIN_PROFIT_TARGET_PERCENT,
     PROFIT_TARGET_PERCENT,
     ROUND_TRIP_FEE_PERCENT,
     SNS_TOPIC_ARN,
@@ -21,6 +24,7 @@ from config import (
 )
 from kraken_client import KrakenClient
 from state_store import StateStore
+from volatility import compute_volatility_target
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -160,17 +164,39 @@ def _handle_buy_placed(
         actual_price = order_info["price"] if order_info.get("price", Decimal("0")) > 0 else Decimal(state["last_buy_price"])
         actual_volume = order_info["vol_exec"] if order_info.get("vol_exec", Decimal("0")) > 0 else Decimal(state["last_buy_volume"])
 
+        # Compute profit target: Dynamic ATR Volatility Engine vs Static Fallback
+        target_pct = PROFIT_TARGET_PERCENT
+        vol_info = ""
+        if DYNAMIC_TARGET_ENABLED:
+            try:
+                candles = client.get_ohlc(TRADING_PAIR, interval=60)
+                dynamic_pct, stats = compute_volatility_target(
+                    candles,
+                    fallback_percent=PROFIT_TARGET_PERCENT,
+                    min_target=MIN_PROFIT_TARGET_PERCENT,
+                    max_target=MAX_PROFIT_TARGET_PERCENT,
+                )
+                target_pct = dynamic_pct
+                vol_info = (
+                    f"\n• Market Volatility (24h Swing): {stats.get('swing_24h_pct', 'N/A')}\n"
+                    f"• 24h High: £{stats.get('high_24h', 'N/A')} | 24h Low: £{stats.get('low_24h', 'N/A')}\n"
+                    f"• Dynamic Target Applied: +{target_pct}%"
+                )
+            except Exception as e:
+                logger.warning("Could not calculate dynamic volatility, using fallback %s%%: %s", PROFIT_TARGET_PERCENT, e)
+
         # Target Sell Price = Buy Price * (1 + Profit Target % + Round Trip Fees %)
-        total_markup = Decimal("1") + ((PROFIT_TARGET_PERCENT + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
+        total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
         raw_sell_price = actual_price * total_markup
         sell_price = _round_decimal(raw_sell_price, pair_decimals, rounding=ROUND_HALF_UP)
 
-        logger.info("Buy filled at £%s. Submitting Limit Sell: %s %s @ £%s (+%s%% net target)", actual_price, actual_volume, TRADING_PAIR, sell_price, PROFIT_TARGET_PERCENT)
+        logger.info("Buy filled at £%s. Submitting Limit Sell: %s %s @ £%s (+%s%% net target)", actual_price, actual_volume, TRADING_PAIR, sell_price, target_pct)
         sell_txid = client.place_limit_order(TRADING_PAIR, "sell", actual_volume, sell_price, post_only=True)
 
         state["state"] = "SELL_PLACED"
         state["active_order_id"] = sell_txid
         state["target_sell_price"] = str(sell_price)
+        state["applied_profit_target_percent"] = str(target_pct)
         state["order_placed_at"] = int(time.time())
         store.save_state(state)
         logger.info("State transitioned to SELL_PLACED (Order ID: %s)", sell_txid)
@@ -181,8 +207,9 @@ def _handle_buy_placed(
             f"• Pair: {TRADING_PAIR}\n"
             f"• Filled Amount: {actual_volume}\n"
             f"• Buy Price: £{actual_price}\n"
-            f"• Total Cost: £{(actual_price * actual_volume):.2f}\n\n"
-            f"Next Action: Limit Sell order queued at target price £{sell_price} (+{PROFIT_TARGET_PERCENT}% net target).\n"
+            f"• Total Cost: £{(actual_price * actual_volume):.2f}\n"
+            f"{vol_info}\n\n"
+            f"Next Action: Limit Sell order queued at target price £{sell_price} (+{target_pct}% target).\n"
             f"Active Order ID: {sell_txid}",
         )
 
@@ -240,8 +267,9 @@ def _handle_sell_placed(
 
         logger.info(">>> CYCLE COMPLETE! Net Profit: +£%s (Total Realized: £%s across %d trades) <<<", net_profit, total_profit, total_trades)
 
-        # Calculate re-entry buy price (e.g. at a discount after selling high)
-        reentry_discount = Decimal("1") - (PROFIT_TARGET_PERCENT / Decimal("100"))
+        # Calculate re-entry buy price based on the target percentage just realized
+        applied_target = Decimal(state.get("applied_profit_target_percent", str(PROFIT_TARGET_PERCENT)))
+        reentry_discount = Decimal("1") - (applied_target / Decimal("100"))
         raw_reentry_price = sell_price * reentry_discount
         reentry_price = _round_decimal(raw_reentry_price, pair_decimals, rounding=ROUND_HALF_UP)
 

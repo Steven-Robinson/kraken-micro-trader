@@ -51,3 +51,21 @@ variable "alert_email" {
   type        = string
   default     = ""
 }
+
+variable "dynamic_target_enabled" {
+  description = "Whether to dynamically compute profit target using 24h market volatility (ATR)"
+  type        = bool
+  default     = true
+}
+
+variable "min_profit_target_percent" {
+  description = "Minimum allowed profit target floor (protects fee efficiency)"
+  type        = string
+  default     = "2.5"
+}
+
+variable "max_profit_target_percent" {
+  description = "Maximum allowed profit target ceiling (avoids stranded orders)"
+  type        = string
+  default     = "6.0"
+}

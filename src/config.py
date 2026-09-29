@@ -21,8 +21,13 @@ BOT_ID = os.getenv("BOT_ID", f"{TRADING_PAIR}-PINGPONG")
 # Capital to allocate per cycle in GBP (keep slightly below total balance for fee safety)
 ALLOCATED_CAPITAL_GBP = Decimal(os.getenv("ALLOCATED_CAPITAL_GBP", "48.00"))
 
-# Target gross profit percentage per round trip (e.g. 2.0%)
-PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "2.0"))
+# Target gross profit percentage per round trip (static baseline / fallback)
+PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "4.0"))
+
+# Dynamic ATR Volatility Engine
+DYNAMIC_TARGET_ENABLED = os.getenv("DYNAMIC_TARGET_ENABLED", "true").lower() in ("true", "1", "yes")
+MIN_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MIN_PROFIT_TARGET_PERCENT", "2.5"))
+MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "6.0"))
 
 # Discount below current market price for limit buy orders (0.1% - 0.3% ensures Maker status)
 BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "0.2"))

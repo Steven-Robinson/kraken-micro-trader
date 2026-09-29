@@ -149,6 +149,17 @@ class KrakenClient:
             "ordermin": Decimal(pair_data.get("ordermin", "0.01")),
         }
 
+    def get_ohlc(self, pair: str, interval: int = 60) -> list[list[Any]]:
+        """Fetch historical candlestick data (default interval: 60 minutes).
+
+        Returns list of candles: [time, open, high, low, close, vwap, volume, count]
+        """
+        result = self._request("/0/public/OHLC", data={"pair": pair, "interval": interval})
+        for k in result:
+            if k != "last":
+                return result[k]
+        return []
+
     # --- Private Endpoints ---
 
     def get_balance(self) -> dict[str, Decimal]:
