@@ -23,9 +23,9 @@ variable "allocated_capital_gbp" {
 }
 
 variable "profit_target_percent" {
-  description = "Gross target percentage profit per cycle (e.g. 2.0)"
+  description = "Gross target percentage profit per cycle (e.g. 1.5)"
   type        = string
-  default     = "2.0"
+  default     = "1.5"
 }
 
 variable "buy_discount_percent" {
@@ -61,11 +61,11 @@ variable "dynamic_target_enabled" {
 variable "min_profit_target_percent" {
   description = "Minimum allowed profit target floor (protects fee efficiency)"
   type        = string
-  default     = "2.5"
+  default     = "0.8"
 }
 
 variable "max_profit_target_percent" {
   description = "Maximum allowed profit target ceiling (avoids stranded orders)"
   type        = string
-  default     = "6.0"
+  default     = "3.0"
 }

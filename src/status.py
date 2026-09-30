@@ -107,7 +107,7 @@ def display_status():
         target_pct, stats = compute_volatility_target(candles)
         print(f"------------------------------------------------------------")
         print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{stats.get('low_24h', '0')} - £{stats.get('high_24h', '0')})")
-        print(f"  Dynamic Target:    {BOLD}{GREEN}+{target_pct}%{RESET} (Range: 2.5% - 6.0%)")
+        print(f"  Dynamic Target:    {BOLD}{GREEN}+{target_pct}%{RESET} (Range: 0.8% - 3.0%)")
     except Exception:
         pass
 
