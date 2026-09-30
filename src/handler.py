@@ -57,6 +57,99 @@ def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal
     return val.quantize(q, rounding=rounding)
 
 
+def check_for_new_deposits(
+    client: KrakenClient,
+    dynamodb_table: str,
+    aws_region: str,
+    num_pairs: int,
+) -> None:
+    """Detect new GBP bank deposits and notify the user via Amazon SNS."""
+    if client.dry_run:
+        return
+
+    try:
+        portfolio_store = StateStore(table_name=dynamodb_table, bot_id="PORTFOLIO-METADATA", aws_region=aws_region)
+        meta = portfolio_store.load_state()
+
+        balances = client.get_balance()
+        current_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+
+        tb = client.get_trade_balance(asset="ZGBP")
+        current_equity = Decimal(str(tb.get("eb", current_cash)))
+
+        last_cash_str = meta.get("last_known_cash")
+        last_equity_str = meta.get("last_known_equity")
+        if not last_cash_str or not last_equity_str:
+            meta["last_known_cash"] = str(current_cash)
+            meta["last_known_equity"] = str(current_equity)
+            meta["updated_at"] = int(time.time())
+            portfolio_store.save_state(meta)
+            return
+
+        last_cash = Decimal(last_cash_str)
+        last_equity = Decimal(last_equity_str)
+        cash_delta = current_cash - last_cash
+        equity_delta = current_equity - last_equity
+
+        # Detect new external cash deposit:
+        # 1. Cash increased by at least £5.00
+        # 2. Equity also increased proportionally (distinguishing from sell order fills where equity delta is only trade profit)
+        is_external_deposit = cash_delta >= Decimal("5.00") and equity_delta >= (cash_delta * Decimal("0.70"))
+
+        if is_external_deposit:
+            fee_buffer = max(MIN_FEE_BUFFER_GBP, current_equity * (FEE_BUFFER_PERCENT / Decimal("100")))
+            tradeable_pool = max(Decimal("0"), current_equity - fee_buffer)
+            target_per_pair = (tradeable_pool / Decimal(num_pairs)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+
+            logger.info(
+                "New cash deposit detected: +£%s (Cash was: £%s, now: £%s; Equity was: £%s, now: £%s)",
+                cash_delta, last_cash, current_cash, last_equity, current_equity
+            )
+            send_alert(
+                f"[Kraken Micro-Trader] New Deposit Detected! (+£{cash_delta:.2f} Added to Trading)",
+                f"We detected a new cash deposit on your Kraken account! 🎉\n\n"
+                f"• Deposit Amount: +£{cash_delta:.2f}\n"
+                f"• Total Available Cash: £{current_cash:.2f}\n"
+                f"• Total Portfolio Equity: £{current_equity:.2f}\n"
+                f"• Preserved Fee Buffer: £{fee_buffer:.2f}\n"
+                f"• Updated Capital per Pair (N={num_pairs}): £{target_per_pair:.2f}\n\n"
+                f"The bot has automatically added these funds to your trading pool. Future buy orders will trade with your scaled capital.",
+            )
+
+            # Update the baseline so we don't alert repeatedly
+            meta["last_known_cash"] = str(current_cash)
+            meta["last_known_equity"] = str(current_equity)
+            meta["updated_at"] = int(time.time())
+            portfolio_store.save_state(meta)
+
+    except Exception as e:
+        logger.warning("Error checking for deposits: %s", e)
+
+
+def sync_portfolio_metadata(
+    client: KrakenClient,
+    dynamodb_table: str,
+    aws_region: str,
+) -> None:
+    """Record latest portfolio cash and equity snapshot in DynamoDB."""
+    if client.dry_run:
+        return
+    try:
+        portfolio_store = StateStore(table_name=dynamodb_table, bot_id="PORTFOLIO-METADATA", aws_region=aws_region)
+        balances = client.get_balance()
+        current_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+        tb = client.get_trade_balance(asset="ZGBP")
+        current_equity = Decimal(str(tb.get("eb", current_cash)))
+
+        portfolio_store.save_state({
+            "last_known_cash": str(current_cash),
+            "last_known_equity": str(current_equity),
+            "updated_at": int(time.time()),
+        })
+    except Exception as e:
+        logger.warning("Failed to sync portfolio metadata: %s", e)
+
+
 def resolve_pair_capital(
     client: KrakenClient,
     num_pairs: int,
@@ -110,10 +203,13 @@ def lambda_handler(event: dict[str, Any] | None = None, context: Any = None) -> 
     api_key, api_secret = get_kraken_credentials()
     client = KrakenClient(api_key=api_key, api_secret=api_secret, dry_run=DRY_RUN)
 
-    # 2. Determine dynamically allocated capital per pair with permanent fee buffer
+    # 2. Check for newly deposited funds from bank and alert user
+    check_for_new_deposits(client, DYNAMODB_TABLE, AWS_REGION, len(TRADING_PAIRS))
+
+    # 3. Determine dynamically allocated capital per pair with permanent fee buffer
     pair_capital = resolve_pair_capital(client, len(TRADING_PAIRS), ALLOCATED_CAPITAL_GBP)
 
-    # 3. Iterate through all configured pairs
+    # 4. Iterate through all configured pairs
     results = {}
     for pair in TRADING_PAIRS:
         try:
@@ -122,6 +218,9 @@ def lambda_handler(event: dict[str, Any] | None = None, context: Any = None) -> 
         except Exception as e:
             logger.error("Error processing pair %s: %s", pair, e, exc_info=True)
             results[pair] = {"pair": pair, "status": "error", "error": str(e)}
+
+    # 5. Sync portfolio cash and equity snapshot for next cycle deposit detection
+    sync_portfolio_metadata(client, DYNAMODB_TABLE, AWS_REGION)
 
     # Backward-compatible summary fields
     primary_res = results.get(TRADING_PAIR, {})
@@ -233,6 +332,17 @@ def _handle_idle(
     state["order_placed_at"] = int(time.time())
     store.save_state(state)
     logger.info("[%s] State transitioned to BUY_PLACED (Order ID: %s)", pair, txid)
+
+    # Update cash baseline in portfolio metadata
+    try:
+        p_store = StateStore(table_name=store.table_name, bot_id="PORTFOLIO-METADATA", aws_region=store.aws_region)
+        p_meta = p_store.load_state()
+        new_balances = client.get_balance()
+        p_meta["last_known_cash"] = str(new_balances.get("ZGBP", new_balances.get("GBP", Decimal("0"))))
+        p_meta["updated_at"] = int(time.time())
+        p_store.save_state(p_meta)
+    except Exception:
+        pass
 
 
 def _handle_buy_placed(
@@ -364,6 +474,17 @@ def _handle_sell_placed(
         total_profit = Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit
 
         logger.info("[%s] >>> CYCLE COMPLETE! Net Profit: +£%s (Total Realized: £%s across %d trades) <<<", pair, net_profit, total_profit, total_trades)
+
+        # Update portfolio metadata with fresh cash after sell fill so it's not confused with a bank deposit
+        try:
+            p_store = StateStore(table_name=store.table_name, bot_id="PORTFOLIO-METADATA", aws_region=store.aws_region)
+            p_meta = p_store.load_state()
+            new_balances = client.get_balance()
+            p_meta["last_known_cash"] = str(new_balances.get("ZGBP", new_balances.get("GBP", Decimal("0"))))
+            p_meta["updated_at"] = int(time.time())
+            p_store.save_state(p_meta)
+        except Exception:
+            pass
 
         # Calculate re-entry buy price based on the target percentage just realized
         applied_target = Decimal(state.get("applied_profit_target_percent", str(PROFIT_TARGET_PERCENT)))

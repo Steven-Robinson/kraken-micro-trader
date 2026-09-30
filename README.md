@@ -131,12 +131,13 @@ EventBridge Trigger (Every 2 Minutes)
 
 ---
 
-## 5. Financial Model (£50 Starting Capital)
+## 5. Financial Model & Dynamic Capital Scaling
 
 | Parameter | Default Value | Description |
 | :--- | :--- | :--- |
 | **Trading Pair(s)** | `SOLGBP`, `ETHGBP` | High liquidity on Kraken, frequent 2-4% daily oscillations |
-| **Capital per Pair** | `£40.00 – £48.00` | Capital allocated per cycle (leaving buffer for fee rounding) |
+| **Capital Allocation** | Dynamic Fair Share | `(Total Equity - Permanent Fee Buffer) / Active Pairs` |
+| **Permanent Fee Buffer**| `max(£2.00, Equity * 3%)` | Strictly reserved cash kept untouched for fee coverage |
 | **Dynamic Target** | `+0.80% – +3.00%` | Half-spread capture calibrated to prevailing 24h market swing |
 | **Maker Fee (Buy)** | `0.25%` | Standard Kraken Pro maker fee tier |
 | **Maker Fee (Sell)**| `0.25%` | Standard Kraken Pro maker fee tier |
@@ -145,7 +146,32 @@ EventBridge Trigger (Every 2 Minutes)
 
 ---
 
-## 6. Multi-Pair "Switch" Configuration
+## 6. Automatic Deposit Detection & Email Alerts
+
+Whenever you transfer additional cash from your UK bank account to Kraken (e.g. monthly top-ups via Faster Payments):
+
+1. **Automatic Detection:** On each 2-minute EventBridge iteration, the bot compares current free cash (`ZGBP`) and total portfolio equity (`eb` from `/0/private/TradeBalance`) against the previous baseline in DynamoDB (`PORTFOLIO-METADATA`).
+2. **False-Positive Immunity:** A true external bank deposit causes **both** cash and total equity to increase together by the deposit amount ($\ge £5.00$). When a sell order fills, cash increases but equity remains unchanged (except for the minor trade profit), guaranteeing zero false deposit alarms from normal trade fills.
+3. **Instant Email Alert via Amazon SNS:** When a deposit is verified, an alert email is immediately dispatched to your registered email:
+   ```text
+   Subject: [Kraken Micro-Trader] New Deposit Detected! (+£50.00 Added to Trading)
+
+   We detected a new cash deposit on your Kraken account! 🎉
+
+   • Deposit Amount: +£50.00
+   • Total Available Cash: £51.81
+   • Total Portfolio Equity: £99.56
+   • Preserved Fee Buffer: £2.99
+   • Updated Capital per Pair (N=2): £48.28
+
+   The bot has automatically added these funds to your trading pool. Future buy orders will trade with your scaled capital.
+   ```
+4. **Permanent Fee Buffer:** The bot always calculates and isolates a permanent fee buffer (`max(£2.00, equity * 3%)`) before deploying funds. Even if an order executes, this buffer remains in uncommitted GBP cash so that fees can never deplete your active trading balances.
+5. **Seamless Capital Scaling:** The remaining tradeable pool is split fairly across all active pairs (`tradeable_pool / N`). Subsequent re-entry orders automatically trade with the increased capital.
+
+---
+
+## 7. Multi-Pair "Switch" Configuration
 
 To scale from single-pair to multi-pair trading:
 
@@ -165,7 +191,7 @@ To scale from single-pair to multi-pair trading:
 
 ---
 
-## 7. Security & Safety Controls
+## 8. Security & Safety Controls
 
 1. **Least-Privilege API Keys:** Uses Kraken API keys configured with **"Query Funds"** and **"Create & Cancel Orders"** only. Withdrawal permissions are disabled.
 2. **Post-Only Orders (`oflags = post`):** Ensures all orders rest on the book as Maker orders. If an order would cross as a Taker (higher fee), Kraken rejects it automatically.
@@ -174,7 +200,7 @@ To scale from single-pair to multi-pair trading:
 
 ---
 
-## 8. Daily Operations Cheat Sheet
+## 9. Daily Operations Cheat Sheet
 
 ```bash
 # Check live multi-pair status (state, prices, active orders, realized profit)

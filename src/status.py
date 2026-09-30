@@ -44,6 +44,30 @@ def get_live_dynamo_state(bot_id: str):
         return None
 
 
+def get_portfolio_metadata():
+    """Fetch DynamoDB state for PORTFOLIO-METADATA."""
+    try:
+        cmd = [
+            "aws", "dynamodb", "get-item",
+            "--table-name", DYNAMODB_TABLE,
+            "--key", json.dumps({"bot_id": {"S": "PORTFOLIO-METADATA"}}),
+            "--region", AWS_REGION,
+            "--output", "json"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        data = json.loads(res.stdout)
+        item = data.get("Item", {})
+        if not item:
+            return None
+        return {
+            "last_known_cash": Decimal(item.get("last_known_cash", {}).get("S", "0.0")),
+            "last_known_equity": Decimal(item.get("last_known_equity", {}).get("S", "0.0")),
+        }
+    except Exception:
+        return None
+
+
+
 def display_pair_status(pair: str):
     """Display individual status card for a trading pair."""
     bot_id = f"{pair}-PINGPONG"
@@ -121,6 +145,17 @@ def display_status():
     print(f"             {BOLD}KRAKEN MICRO-TRADER STATUS{RESET}")
     print(f"{BOLD}{CYAN}============================================================{RESET}")
     print(f"  Active Pairs:      {BOLD}{', '.join(TRADING_PAIRS)}{RESET}")
+
+    meta = get_portfolio_metadata()
+    if meta:
+        cash = meta["last_known_cash"]
+        equity = meta["last_known_equity"]
+        fee_buffer = max(Decimal("2.00"), equity * Decimal("0.03"))
+        tradeable = max(Decimal("0.0"), equity - fee_buffer)
+        per_pair = tradeable / Decimal(len(TRADING_PAIRS))
+        print(f"  Portfolio Equity:  {BOLD}£{equity:.2f}{RESET} (Cash: £{cash:.2f})")
+        print(f"  Fee Buffer Held:   {BOLD}£{fee_buffer:.2f}{RESET} (Permanent Reserve)")
+        print(f"  Tradeable Capital: {BOLD}£{tradeable:.2f}{RESET} (£{per_pair:.2f}/pair across {len(TRADING_PAIRS)} pairs)")
 
     total_all_trades = 0
     total_all_profit = Decimal("0.0")
