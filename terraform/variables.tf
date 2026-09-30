@@ -16,6 +16,12 @@ variable "trading_pair" {
   default     = "SOLGBP"
 }
 
+variable "trading_pairs" {
+  description = "Comma-separated list of Kraken asset pairs to trade (e.g. SOLGBP or SOLGBP,ETHGBP)"
+  type        = string
+  default     = "SOLGBP"
+}
+
 variable "allocated_capital_gbp" {
   description = "Total GBP capital to allocate per trade cycle"
   type        = string

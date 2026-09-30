@@ -158,6 +158,7 @@ resource "aws_lambda_function" "crypto_bot" {
     variables = {
       DRY_RUN               = tostring(var.dry_run)
       TRADING_PAIR          = var.trading_pair
+      TRADING_PAIRS         = var.trading_pairs
       BOT_ID                = var.bot_id
       ALLOCATED_CAPITAL_GBP = var.allocated_capital_gbp
       PROFIT_TARGET_PERCENT = var.profit_target_percent

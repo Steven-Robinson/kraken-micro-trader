@@ -15,10 +15,16 @@ except ImportError:
 
 # --- General Trading Parameters ---
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
-TRADING_PAIR = os.getenv("TRADING_PAIR", "SOLGBP")
+
+# Multi-pair support (comma-separated list, e.g. "SOLGBP" or "SOLGBP,ETHGBP")
+TRADING_PAIRS_RAW = os.getenv("TRADING_PAIRS", os.getenv("TRADING_PAIR", "SOLGBP"))
+TRADING_PAIRS = [p.strip().upper() for p in TRADING_PAIRS_RAW.split(",") if p.strip()]
+
+# Default primary pair (for backwards compatibility)
+TRADING_PAIR = TRADING_PAIRS[0] if TRADING_PAIRS else "SOLGBP"
 BOT_ID = os.getenv("BOT_ID", f"{TRADING_PAIR}-PINGPONG")
 
-# Capital to allocate per cycle in GBP (keep slightly below total balance for fee safety)
+# Capital to allocate per active trading pair in GBP
 ALLOCATED_CAPITAL_GBP = Decimal(os.getenv("ALLOCATED_CAPITAL_GBP", "48.00"))
 
 # Target gross profit percentage per round trip (static baseline / fallback)

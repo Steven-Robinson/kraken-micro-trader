@@ -20,6 +20,7 @@ from config import (
     ROUND_TRIP_FEE_PERCENT,
     SNS_TOPIC_ARN,
     TRADING_PAIR,
+    TRADING_PAIRS,
     get_kraken_credentials,
 )
 from kraken_client import KrakenClient
@@ -55,41 +56,73 @@ def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal
 
 def lambda_handler(event: dict[str, Any] | None = None, context: Any = None) -> dict[str, Any]:
     """AWS Lambda entrypoint triggered by EventBridge cron."""
-    logger.info("Starting Kraken Micro-Trader iteration (DRY_RUN=%s, Pair=%s)", DRY_RUN, TRADING_PAIR)
+    logger.info("Starting Kraken Micro-Trader iteration (DRY_RUN=%s, Pairs=%s)", DRY_RUN, TRADING_PAIRS)
 
-    # 1. Setup client and state store
+    # 1. Setup Kraken client
     api_key, api_secret = get_kraken_credentials()
     client = KrakenClient(api_key=api_key, api_secret=api_secret, dry_run=DRY_RUN)
-    store = StateStore(table_name=DYNAMODB_TABLE, bot_id=BOT_ID, aws_region=AWS_REGION)
+
+    # 2. Iterate through all configured pairs
+    results = {}
+    for pair in TRADING_PAIRS:
+        try:
+            res = process_pair(pair, client, DYNAMODB_TABLE, AWS_REGION, ALLOCATED_CAPITAL_GBP)
+            results[pair] = res
+        except Exception as e:
+            logger.error("Error processing pair %s: %s", pair, e, exc_info=True)
+            results[pair] = {"pair": pair, "status": "error", "error": str(e)}
+
+    # Backward-compatible summary fields
+    primary_res = results.get(TRADING_PAIR, {})
+    total_trades = sum(r.get("trades_completed", 0) for r in results.values() if isinstance(r, dict))
+
+    return {
+        "status": "success",
+        "pairs": results,
+        "bot_state": primary_res.get("bot_state", "IDLE"),
+        "trades_completed": total_trades,
+    }
+
+
+def process_pair(
+    pair: str,
+    client: KrakenClient,
+    dynamodb_table: str,
+    aws_region: str,
+    capital: Decimal,
+) -> dict[str, Any]:
+    """Process a single trading pair's state machine."""
+    bot_id = f"{pair}-PINGPONG"
+    store = StateStore(table_name=dynamodb_table, bot_id=bot_id, aws_region=aws_region)
 
     state = store.load_state()
     current_state = state.get("state", "IDLE")
-    logger.info("Current Bot State: %s", current_state)
+    logger.info("[%s] Current Bot State: %s (Bot ID: %s)", pair, current_state, bot_id)
 
     if current_state == "PAUSED":
-        logger.warning("Bot is PAUSED. Halting execution.")
-        return {"status": "paused"}
+        logger.warning("[%s] Bot is PAUSED. Halting execution.", pair)
+        return {"pair": pair, "status": "paused"}
 
-    # 2. Fetch pair precision rules from Kraken
-    pair_info = client.get_pair_info(TRADING_PAIR)
+    # Fetch pair precision rules from Kraken
+    pair_info = client.get_pair_info(pair)
     pair_decimals = pair_info["pair_decimals"]
     lot_decimals = pair_info["lot_decimals"]
     ordermin = pair_info["ordermin"]
 
-    # 3. State Machine Router
+    # State Machine Router
     if current_state == "IDLE":
-        _handle_idle(client, store, state, pair_decimals, lot_decimals, ordermin)
+        _handle_idle(client, store, state, pair, pair_decimals, lot_decimals, ordermin, capital)
     elif current_state == "BUY_PLACED":
-        _handle_buy_placed(client, store, state, pair_decimals, lot_decimals)
+        _handle_buy_placed(client, store, state, pair, pair_decimals, lot_decimals)
     elif current_state == "SELL_PLACED":
-        _handle_sell_placed(client, store, state, pair_decimals, lot_decimals, ordermin)
+        _handle_sell_placed(client, store, state, pair, pair_decimals, lot_decimals, ordermin, capital)
     else:
-        logger.error("Unknown state '%s'. Resetting to IDLE.", current_state)
+        logger.error("[%s] Unknown state '%s'. Resetting to IDLE.", pair, current_state)
         state["state"] = "IDLE"
         store.save_state(state)
 
     return {
-        "status": "success",
+        "pair": pair,
         "bot_state": state.get("state"),
         "trades_completed": state.get("trades_completed", 0),
         "total_profit_gbp": state.get("total_realized_profit_gbp", "0.0"),
@@ -100,14 +133,16 @@ def _handle_idle(
     client: KrakenClient,
     store: StateStore,
     state: dict[str, Any],
+    pair: str,
     pair_decimals: int,
     lot_decimals: int,
     ordermin: Decimal,
+    capital: Decimal,
 ) -> None:
     """IDLE state: Place initial Limit Buy order at a slight discount to current bid."""
-    ticker = client.get_ticker(TRADING_PAIR)
+    ticker = client.get_ticker(pair)
     best_bid = ticker["bid"]
-    logger.info("Market Ticker: Bid=£%s, Ask=£%s, Last=£%s", best_bid, ticker["ask"], ticker["last"])
+    logger.info("[%s] Market Ticker: Bid=£%s, Ask=£%s, Last=£%s", pair, best_bid, ticker["ask"], ticker["last"])
 
     # Calculate buy price (e.g. 0.2% below current best bid to guarantee Maker status)
     discount_multiplier = Decimal("1") - (BUY_DISCOUNT_PERCENT / Decimal("100"))
@@ -115,19 +150,19 @@ def _handle_idle(
     buy_price = _round_decimal(raw_buy_price, pair_decimals, rounding=ROUND_HALF_UP)
 
     # Calculate volume based on allocated GBP capital
-    raw_volume = ALLOCATED_CAPITAL_GBP / buy_price
+    raw_volume = capital / buy_price
     volume = _round_decimal(raw_volume, lot_decimals, rounding=ROUND_DOWN)
 
     if volume < ordermin:
-        logger.error("Calculated volume %s is below Kraken minimum %s. Increase capital.", volume, ordermin)
+        logger.error("[%s] Calculated volume %s is below Kraken minimum %s. Increase capital.", pair, volume, ordermin)
         return
 
-    logger.info("Placing initial Limit Buy: %s %s @ £%s (Capital: £%s)", volume, TRADING_PAIR, buy_price, ALLOCATED_CAPITAL_GBP)
+    logger.info("[%s] Placing initial Limit Buy: %s %s @ £%s (Capital: £%s)", pair, volume, pair, buy_price, capital)
     try:
-        txid = client.place_limit_order(TRADING_PAIR, "buy", volume, buy_price, post_only=True)
+        txid = client.place_limit_order(pair, "buy", volume, buy_price, post_only=True)
     except Exception as e:
         if "User Locked" in str(e):
-            logger.warning("Kraken Account is currently in the UK FCA 24-hour cooling-off period. Will automatically retry every 2 minutes until unlocked.")
+            logger.warning("[%s] Kraken Account is currently in the UK FCA 24-hour cooling-off period. Will retry every 2 minutes.", pair)
             return
         raise
 
@@ -137,39 +172,40 @@ def _handle_idle(
     state["last_buy_volume"] = str(volume)
     state["order_placed_at"] = int(time.time())
     store.save_state(state)
-    logger.info("State transitioned to BUY_PLACED (Order ID: %s)", txid)
+    logger.info("[%s] State transitioned to BUY_PLACED (Order ID: %s)", pair, txid)
 
 
 def _handle_buy_placed(
     client: KrakenClient,
     store: StateStore,
     state: dict[str, Any],
+    pair: str,
     pair_decimals: int,
     lot_decimals: int,
 ) -> None:
     """BUY_PLACED state: Monitor buy order fill. When filled, submit Limit Sell."""
     txid = state.get("active_order_id")
     if not txid:
-        logger.error("No active_order_id found in BUY_PLACED. Resetting to IDLE.")
+        logger.error("[%s] No active_order_id found in BUY_PLACED. Resetting to IDLE.", pair)
         state["state"] = "IDLE"
         store.save_state(state)
         return
 
     order_info = client.query_order(txid)
     status = order_info.get("status")
-    logger.info("Buy Order %s status: %s", txid, status)
+    logger.info("[%s] Buy Order %s status: %s", pair, txid, status)
 
     if status == "closed":
         # Order is filled! Place the limit sell order at profit target
         actual_price = order_info["price"] if order_info.get("price", Decimal("0")) > 0 else Decimal(state["last_buy_price"])
         actual_volume = order_info["vol_exec"] if order_info.get("vol_exec", Decimal("0")) > 0 else Decimal(state["last_buy_volume"])
 
-        # Compute profit target: Dynamic ATR Volatility Engine vs Static Fallback
+        # Compute profit target: Dynamic Half-Spread Engine vs Fallback
         target_pct = PROFIT_TARGET_PERCENT
         vol_info = ""
         if DYNAMIC_TARGET_ENABLED:
             try:
-                candles = client.get_ohlc(TRADING_PAIR, interval=60)
+                candles = client.get_ohlc(pair, interval=60)
                 dynamic_pct, stats = compute_volatility_target(
                     candles,
                     fallback_percent=PROFIT_TARGET_PERCENT,
@@ -178,20 +214,20 @@ def _handle_buy_placed(
                 )
                 target_pct = dynamic_pct
                 vol_info = (
-                    f"\n• Market Volatility (24h Swing): {stats.get('swing_24h_pct', 'N/A')}\n"
+                    f"\n• Market Volatility (24h Spread): {stats.get('swing_24h_pct', 'N/A')}\n"
                     f"• 24h High: £{stats.get('high_24h', 'N/A')} | 24h Low: £{stats.get('low_24h', 'N/A')}\n"
                     f"• Dynamic Target Applied: +{target_pct}%"
                 )
             except Exception as e:
-                logger.warning("Could not calculate dynamic volatility, using fallback %s%%: %s", PROFIT_TARGET_PERCENT, e)
+                logger.warning("[%s] Could not calculate dynamic volatility, using fallback %s%%: %s", pair, PROFIT_TARGET_PERCENT, e)
 
         # Target Sell Price = Buy Price * (1 + Profit Target % + Round Trip Fees %)
         total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
         raw_sell_price = actual_price * total_markup
         sell_price = _round_decimal(raw_sell_price, pair_decimals, rounding=ROUND_HALF_UP)
 
-        logger.info("Buy filled at £%s. Submitting Limit Sell: %s %s @ £%s (+%s%% net target)", actual_price, actual_volume, TRADING_PAIR, sell_price, target_pct)
-        sell_txid = client.place_limit_order(TRADING_PAIR, "sell", actual_volume, sell_price, post_only=True)
+        logger.info("[%s] Buy filled at £%s. Submitting Limit Sell: %s %s @ £%s (+%s%% net target)", pair, actual_price, actual_volume, pair, sell_price, target_pct)
+        sell_txid = client.place_limit_order(pair, "sell", actual_volume, sell_price, post_only=True)
 
         state["state"] = "SELL_PLACED"
         state["active_order_id"] = sell_txid
@@ -199,12 +235,12 @@ def _handle_buy_placed(
         state["applied_profit_target_percent"] = str(target_pct)
         state["order_placed_at"] = int(time.time())
         store.save_state(state)
-        logger.info("State transitioned to SELL_PLACED (Order ID: %s)", sell_txid)
+        logger.info("[%s] State transitioned to SELL_PLACED (Order ID: %s)", pair, sell_txid)
 
         send_alert(
-            f"[Kraken Micro-Trader] Buy Order Filled: {actual_volume} {TRADING_PAIR} @ £{actual_price}",
+            f"[Kraken Micro-Trader] Buy Order Filled: {actual_volume} {pair} @ £{actual_price}",
             f"Your Limit Buy order on Kraken filled successfully!\n\n"
-            f"• Pair: {TRADING_PAIR}\n"
+            f"• Pair: {pair}\n"
             f"• Filled Amount: {actual_volume}\n"
             f"• Buy Price: £{actual_price}\n"
             f"• Total Cost: £{(actual_price * actual_volume):.2f}\n"
@@ -217,16 +253,16 @@ def _handle_buy_placed(
         # Check if the order has been sitting unfilled too long
         order_age_hours = (time.time() - state.get("order_placed_at", time.time())) / 3600
         if order_age_hours > float(MAX_STALE_HOURS):
-            logger.warning("Buy order %s has been open for %.1f hours. Cancelling to replace.", txid, order_age_hours)
+            logger.warning("[%s] Buy order %s has been open for %.1f hours. Cancelling to replace.", pair, txid, order_age_hours)
             client.cancel_order(txid)
             state["state"] = "IDLE"
             state["active_order_id"] = None
             store.save_state(state)
         else:
-            logger.info("Buy order %s still open (Age: %.1f hours). Waiting.", txid, order_age_hours)
+            logger.info("[%s] Buy order %s still open (Age: %.1f hours). Waiting.", pair, txid, order_age_hours)
 
     elif status in ("canceled", "expired"):
-        logger.warning("Buy order %s was %s. Returning to IDLE.", txid, status)
+        logger.warning("[%s] Buy order %s was %s. Returning to IDLE.", pair, txid, status)
         state["state"] = "IDLE"
         state["active_order_id"] = None
         store.save_state(state)
@@ -236,21 +272,23 @@ def _handle_sell_placed(
     client: KrakenClient,
     store: StateStore,
     state: dict[str, Any],
+    pair: str,
     pair_decimals: int,
     lot_decimals: int,
     ordermin: Decimal,
+    capital: Decimal,
 ) -> None:
     """SELL_PLACED state: Monitor sell order fill. When filled, lock in profit and re-enter."""
     txid = state.get("active_order_id")
     if not txid:
-        logger.error("No active_order_id found in SELL_PLACED. Resetting to IDLE.")
+        logger.error("[%s] No active_order_id found in SELL_PLACED. Resetting to IDLE.", pair)
         state["state"] = "IDLE"
         store.save_state(state)
         return
 
     order_info = client.query_order(txid)
     status = order_info.get("status")
-    logger.info("Sell Order %s status: %s", txid, status)
+    logger.info("[%s] Sell Order %s status: %s", pair, txid, status)
 
     if status == "closed":
         # Cycle complete! Realize profit
@@ -265,7 +303,7 @@ def _handle_sell_placed(
         total_trades = state.get("trades_completed", 0) + 1
         total_profit = Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit
 
-        logger.info(">>> CYCLE COMPLETE! Net Profit: +£%s (Total Realized: £%s across %d trades) <<<", net_profit, total_profit, total_trades)
+        logger.info("[%s] >>> CYCLE COMPLETE! Net Profit: +£%s (Total Realized: £%s across %d trades) <<<", pair, net_profit, total_profit, total_trades)
 
         # Calculate re-entry buy price based on the target percentage just realized
         applied_target = Decimal(state.get("applied_profit_target_percent", str(PROFIT_TARGET_PERCENT)))
@@ -273,11 +311,11 @@ def _handle_sell_placed(
         raw_reentry_price = sell_price * reentry_discount
         reentry_price = _round_decimal(raw_reentry_price, pair_decimals, rounding=ROUND_HALF_UP)
 
-        raw_volume = ALLOCATED_CAPITAL_GBP / reentry_price
+        raw_volume = capital / reentry_price
         reentry_volume = _round_decimal(raw_volume, lot_decimals, rounding=ROUND_DOWN)
 
-        logger.info("Submitting new Limit Buy for next cycle: %s %s @ £%s", reentry_volume, TRADING_PAIR, reentry_price)
-        buy_txid = client.place_limit_order(TRADING_PAIR, "buy", reentry_volume, reentry_price, post_only=True)
+        logger.info("[%s] Submitting new Limit Buy for next cycle: %s %s @ £%s", pair, reentry_volume, pair, reentry_price)
+        buy_txid = client.place_limit_order(pair, "buy", reentry_volume, reentry_price, post_only=True)
 
         state["state"] = "BUY_PLACED"
         state["active_order_id"] = buy_txid
@@ -289,25 +327,26 @@ def _handle_sell_placed(
         store.save_state(state)
 
         send_alert(
-            f"[Kraken Micro-Trader] Profit Locked In! (+£{net_profit:.2f})",
+            f"[Kraken Micro-Trader] Profit Locked In on {pair}! (+£{net_profit:.2f})",
             f"Your Limit Sell order on Kraken filled successfully! 🚀\n\n"
-            f"• Sold: {volume} {TRADING_PAIR} @ £{sell_price}\n"
+            f"• Pair: {pair}\n"
+            f"• Sold: {volume} {pair} @ £{sell_price}\n"
             f"• Entry Price: £{buy_price}\n"
             f"• Net Profit (After Fees): +£{net_profit:.4f}\n"
             f"• Total Realized Profit to Date: £{total_profit:.4f} across {total_trades} trade(s)\n\n"
-            f"Next Action: Queued re-entry Limit Buy order at £{reentry_price} for {reentry_volume} {TRADING_PAIR}.\n"
+            f"Next Action: Queued re-entry Limit Buy order at £{reentry_price} for {reentry_volume} {pair}.\n"
             f"Active Order ID: {buy_txid}",
         )
 
     elif status == "open":
-        logger.info("Sell order %s still open waiting for target price £%s.", txid, state.get("target_sell_price"))
+        logger.info("[%s] Sell order %s still open waiting for target price £%s.", pair, txid, state.get("target_sell_price"))
 
     elif status in ("canceled", "expired"):
-        logger.warning("Sell order %s was %s! Re-submitting at target price.", txid, status)
+        logger.warning("[%s] Sell order %s was %s! Re-submitting at target price.", pair, txid, status)
         target_price = Decimal(state.get("target_sell_price", "0"))
         volume = Decimal(state.get("last_buy_volume", "0"))
         if target_price > 0 and volume > 0:
-            new_txid = client.place_limit_order(TRADING_PAIR, "sell", volume, target_price, post_only=True)
+            new_txid = client.place_limit_order(pair, "sell", volume, target_price, post_only=True)
             state["active_order_id"] = new_txid
             store.save_state(state)
         else:
