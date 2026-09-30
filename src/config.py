@@ -24,8 +24,13 @@ TRADING_PAIRS = [p.strip().upper() for p in TRADING_PAIRS_RAW.split(",") if p.st
 TRADING_PAIR = TRADING_PAIRS[0] if TRADING_PAIRS else "SOLGBP"
 BOT_ID = os.getenv("BOT_ID", f"{TRADING_PAIR}-PINGPONG")
 
-# Capital to allocate per active trading pair in GBP
+# Capital to allocate per active trading pair in GBP (static fallback)
 ALLOCATED_CAPITAL_GBP = Decimal(os.getenv("ALLOCATED_CAPITAL_GBP", "48.00"))
+
+# Dynamic Auto-Split Capital & Permanent Fee Buffer
+DYNAMIC_CAPITAL_ENABLED = os.getenv("DYNAMIC_CAPITAL_ENABLED", "true").lower() in ("true", "1", "yes")
+MIN_FEE_BUFFER_GBP = Decimal(os.getenv("MIN_FEE_BUFFER_GBP", "2.00"))  # Minimum permanent uncommitted fee buffer
+FEE_BUFFER_PERCENT = Decimal(os.getenv("FEE_BUFFER_PERCENT", "3.0"))   # % buffer on larger balances
 
 # Target gross profit percentage per round trip (static baseline / fallback)
 PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "1.5"))

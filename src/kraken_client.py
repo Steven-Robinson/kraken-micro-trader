@@ -170,6 +170,14 @@ class KrakenClient:
         result = self._request("/0/private/Balance", is_private=True)
         return {k: Decimal(str(v)) for k, v in result.items()}
 
+    def get_trade_balance(self, asset: str = "ZGBP") -> dict[str, Decimal]:
+        """Get trade balance and equity summary."""
+        if self.dry_run and self.api_key == "mock_api_key":
+            return {"eb": Decimal("50.00"), "tb": Decimal("50.00"), "mf": Decimal("50.00"), "mfo": Decimal("50.00")}
+
+        result = self._request("/0/private/TradeBalance", data={"asset": asset}, is_private=True)
+        return {k: Decimal(str(v)) for k, v in result.items()}
+
     def place_limit_order(
         self,
         pair: str,

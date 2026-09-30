@@ -12,9 +12,12 @@ from config import (
     BUY_DISCOUNT_PERCENT,
     DYNAMODB_TABLE,
     DRY_RUN,
+    DYNAMIC_CAPITAL_ENABLED,
     DYNAMIC_TARGET_ENABLED,
+    FEE_BUFFER_PERCENT,
     MAX_PROFIT_TARGET_PERCENT,
     MAX_STALE_HOURS,
+    MIN_FEE_BUFFER_GBP,
     MIN_PROFIT_TARGET_PERCENT,
     PROFIT_TARGET_PERCENT,
     ROUND_TRIP_FEE_PERCENT,
@@ -54,6 +57,51 @@ def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal
     return val.quantize(q, rounding=rounding)
 
 
+def resolve_pair_capital(
+    client: KrakenClient,
+    num_pairs: int,
+    fallback_capital: Decimal,
+) -> Decimal:
+    """Dynamically determine capital per active pair, reserving a permanent fee buffer.
+
+    Formula:
+        1. Fetch Total Portfolio Equity (eb = cash + crypto value) from TradeBalance.
+        2. Calculate permanent fee buffer: max(MIN_FEE_BUFFER_GBP, Total Equity * FEE_BUFFER_PERCENT / 100).
+        3. Tradeable pool = Total Equity - Fee Buffer.
+        4. Target per pair = Tradeable pool / num_pairs.
+    """
+    if not DYNAMIC_CAPITAL_ENABLED or client.dry_run:
+        return fallback_capital
+
+    try:
+        tb = client.get_trade_balance(asset="ZGBP")
+        balances = client.get_balance()
+        free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+        total_equity = Decimal(str(tb.get("eb", free_cash)))
+
+        # Permanent fee buffer: min £2.00, or 3% on larger balances
+        fee_buffer = max(MIN_FEE_BUFFER_GBP, total_equity * (FEE_BUFFER_PERCENT / Decimal("100")))
+        tradeable_pool = max(Decimal("0"), total_equity - fee_buffer)
+
+        # Fair share per pair
+        target_per_pair = (tradeable_pool / Decimal(num_pairs)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+
+        logger.info(
+            "Dynamic Capital Pool: Total Equity=£%s, Free Cash=£%s, Fee Buffer=£%s -> Target/Pair=£%s (N=%d)",
+            total_equity,
+            free_cash,
+            fee_buffer,
+            target_per_pair,
+            num_pairs,
+        )
+
+        return target_per_pair if target_per_pair > Decimal("5.00") else fallback_capital
+
+    except Exception as e:
+        logger.warning("Failed to calculate dynamic capital, using fallback £%s: %s", fallback_capital, e)
+        return fallback_capital
+
+
 def lambda_handler(event: dict[str, Any] | None = None, context: Any = None) -> dict[str, Any]:
     """AWS Lambda entrypoint triggered by EventBridge cron."""
     logger.info("Starting Kraken Micro-Trader iteration (DRY_RUN=%s, Pairs=%s)", DRY_RUN, TRADING_PAIRS)
@@ -62,11 +110,14 @@ def lambda_handler(event: dict[str, Any] | None = None, context: Any = None) -> 
     api_key, api_secret = get_kraken_credentials()
     client = KrakenClient(api_key=api_key, api_secret=api_secret, dry_run=DRY_RUN)
 
-    # 2. Iterate through all configured pairs
+    # 2. Determine dynamically allocated capital per pair with permanent fee buffer
+    pair_capital = resolve_pair_capital(client, len(TRADING_PAIRS), ALLOCATED_CAPITAL_GBP)
+
+    # 3. Iterate through all configured pairs
     results = {}
     for pair in TRADING_PAIRS:
         try:
-            res = process_pair(pair, client, DYNAMODB_TABLE, AWS_REGION, ALLOCATED_CAPITAL_GBP)
+            res = process_pair(pair, client, DYNAMODB_TABLE, AWS_REGION, pair_capital)
             results[pair] = res
         except Exception as e:
             logger.error("Error processing pair %s: %s", pair, e, exc_info=True)
@@ -149,15 +200,24 @@ def _handle_idle(
     raw_buy_price = best_bid * discount_multiplier
     buy_price = _round_decimal(raw_buy_price, pair_decimals, rounding=ROUND_HALF_UP)
 
+    # Strictly protect the permanent fee buffer from free cash
+    balances = client.get_balance()
+    free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+    tradeable_cash = max(Decimal("0"), free_cash - MIN_FEE_BUFFER_GBP)
+    effective_capital = min(capital, tradeable_cash)
+
     # Calculate volume based on allocated GBP capital
-    raw_volume = capital / buy_price
+    raw_volume = effective_capital / buy_price
     volume = _round_decimal(raw_volume, lot_decimals, rounding=ROUND_DOWN)
 
     if volume < ordermin:
-        logger.error("[%s] Calculated volume %s is below Kraken minimum %s. Increase capital.", pair, volume, ordermin)
+        logger.warning(
+            "[%s] Calculated volume %s (Capital: £%s, FreeCash: £%s) is below Kraken minimum %s. Waiting for funds/fill.",
+            pair, volume, effective_capital, free_cash, ordermin
+        )
         return
 
-    logger.info("[%s] Placing initial Limit Buy: %s %s @ £%s (Capital: £%s)", pair, volume, pair, buy_price, capital)
+    logger.info("[%s] Placing initial Limit Buy: %s %s @ £%s (Capital: £%s, Fee Buffer Kept: £%s)", pair, volume, pair, buy_price, effective_capital, MIN_FEE_BUFFER_GBP)
     try:
         txid = client.place_limit_order(pair, "buy", volume, buy_price, post_only=True)
     except Exception as e:
@@ -311,10 +371,16 @@ def _handle_sell_placed(
         raw_reentry_price = sell_price * reentry_discount
         reentry_price = _round_decimal(raw_reentry_price, pair_decimals, rounding=ROUND_HALF_UP)
 
-        raw_volume = capital / reentry_price
+        # Strictly protect permanent fee buffer on re-entry buy
+        balances = client.get_balance()
+        free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+        tradeable_cash = max(Decimal("0"), free_cash - MIN_FEE_BUFFER_GBP)
+        effective_capital = min(capital, tradeable_cash)
+
+        raw_volume = effective_capital / reentry_price
         reentry_volume = _round_decimal(raw_volume, lot_decimals, rounding=ROUND_DOWN)
 
-        logger.info("[%s] Submitting new Limit Buy for next cycle: %s %s @ £%s", pair, reentry_volume, pair, reentry_price)
+        logger.info("[%s] Submitting new Limit Buy for next cycle: %s %s @ £%s (Capital: £%s, Fee Buffer Kept: £%s)", pair, reentry_volume, pair, reentry_price, effective_capital, MIN_FEE_BUFFER_GBP)
         buy_txid = client.place_limit_order(pair, "buy", reentry_volume, reentry_price, post_only=True)
 
         state["state"] = "BUY_PLACED"

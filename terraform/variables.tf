@@ -75,3 +75,21 @@ variable "max_profit_target_percent" {
   type        = string
   default     = "3.0"
 }
+
+variable "dynamic_capital_enabled" {
+  description = "Automatically detect deposits and trade size dynamically"
+  type        = bool
+  default     = true
+}
+
+variable "min_fee_buffer_gbp" {
+  description = "Minimum uncommitted GBP cash reserved for trading fees"
+  type        = string
+  default     = "2.00"
+}
+
+variable "fee_buffer_percent" {
+  description = "Percentage of portfolio equity reserved for fees"
+  type        = string
+  default     = "3.0"
+}
