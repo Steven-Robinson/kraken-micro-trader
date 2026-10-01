@@ -93,3 +93,30 @@ variable "fee_buffer_percent" {
   type        = string
   default     = "3.0"
 }
+
+# -----------------------------------------------------------------------------
+# EC2 Triangular Arbitrage Daemon Variables
+# -----------------------------------------------------------------------------
+variable "enable_ec2_arb_daemon" {
+  description = "Whether to provision the EC2 Triangular Arbitrage WebSocket daemon"
+  type        = bool
+  default     = false
+}
+
+variable "ec2_instance_type" {
+  description = "EC2 instance size for the low-latency arbitrage daemon"
+  type        = string
+  default     = "t4g.nano"
+}
+
+variable "arb_capital_gbp" {
+  description = "Capital in GBP to allocate to the triangular arbitrage daemon"
+  type        = string
+  default     = "30.00"
+}
+
+variable "arb_dry_run" {
+  description = "Whether the arbitrage daemon runs in simulation mode or executes live orders"
+  type        = bool
+  default     = false
+}

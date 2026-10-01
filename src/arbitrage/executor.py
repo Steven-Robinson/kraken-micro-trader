@@ -1,5 +1,7 @@
 """Execution engine for Kraken triangular arbitrage with atomic safeguards."""
 
+from __future__ import annotations
+
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 import logging
 import time

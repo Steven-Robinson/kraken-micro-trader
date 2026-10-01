@@ -4,6 +4,8 @@ Uses standard Python library (urllib, hmac, hashlib, base64) to eliminate
 third-party dependencies in AWS Lambda.
 """
 
+from __future__ import annotations
+
 import base64
 from decimal import Decimal
 import hashlib

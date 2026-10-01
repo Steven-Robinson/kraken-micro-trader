@@ -17,4 +17,16 @@ buy_discount_percent = "0.2"
 dry_run = true
 
 # EventBridge execution frequency
-cron_schedule = "rate(5 minutes)"
+cron_schedule = "rate(2 minutes)"
+
+# Notification email for alerts
+alert_email = "you@example.com"
+
+# Multi-pair basket
+trading_pairs = "SOLGBP,ETHGBP,BTCGBP"
+
+# EC2 WebSocket Triangular Arbitrage Daemon
+enable_ec2_arb_daemon = true
+ec2_instance_type     = "t4g.nano"
+arb_capital_gbp       = "30.00"
+arb_dry_run           = false

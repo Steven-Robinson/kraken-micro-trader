@@ -22,3 +22,21 @@ output "dry_run_mode" {
   description = "Whether the bot is currently in simulation mode"
   value       = var.dry_run
 }
+
+# -----------------------------------------------------------------------------
+# EC2 Triangular Arbitrage Daemon Outputs
+# -----------------------------------------------------------------------------
+output "ec2_instance_id" {
+  description = "Instance ID of the EC2 Arbitrage Daemon"
+  value       = try(aws_instance.arb_daemon[0].id, null)
+}
+
+output "ec2_public_ip" {
+  description = "Public IP of the EC2 Arbitrage Daemon"
+  value       = try(aws_instance.arb_daemon[0].public_ip, null)
+}
+
+output "ec2_security_group_id" {
+  description = "Security Group ID of the EC2 Arbitrage Daemon"
+  value       = try(aws_security_group.arb_sg[0].id, null)
+}
