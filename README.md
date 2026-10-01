@@ -215,3 +215,36 @@ aws events enable-rule --name kraken-trader-schedule --region eu-west-1
 # Pause / Disable automated trading
 aws events disable-rule --name kraken-trader-schedule --region eu-west-1
 ```
+
+---
+
+## 10. Intra-Exchange Triangular Arbitrage Engine
+
+The repository also includes an opportunistic **Triangular Arbitrage Engine** designed to exploit momentary pricing lags across Kraken's native order books (`GBP -> Asset A -> Asset B -> GBP`).
+
+### Why It Complements the Micro-Trader:
+1. **Zero Directional Market Risk:** Unlike directional ping-pong trades which hold crypto while waiting for a price target, triangular cycles complete in seconds and return capital immediately to pure GBP.
+2. **Shares the Existing Capital Pool:** Operates whenever funds are in cash. Zero extra capital required.
+3. **Monthly Capital Auto-Scaling:** As you add monthly cash deposits, the engine automatically scales its trade size up (`(Free Cash - Fee Buffer)`), while strictly protecting the permanent fee buffer (`max(£2.00, equity * 3%)`) and clamping to top-of-book depth to prevent slippage.
+4. **Verified Live Spreads on Kraken:**
+   ```text
+   • BCH <-> ETH (BCHETH) [MAKER]: Gross +1.45% | Net +0.70% (+£0.31 net on £45)
+   • FIL <-> ETH (FILETH) [MAKER]: Gross +1.10% | Net +0.35% (+£0.16 net on £45)
+   • BCH <-> USDC (BCHUSDC) [MAKER]: Gross +0.99% | Net +0.23% (+£0.10 net on £45)
+   ```
+
+### Daily Triangular Operations:
+```bash
+# Snapshot scan of live Kraken order books for net-profitable opportunities
+python3 src/arb_cli.py --scan
+
+# Continuous real-time monitor polling every 5 seconds
+python3 src/arb_cli.py --monitor
+
+# Scan all 78 mapped triangles (including lower-liquidity altcoin crosses)
+python3 src/arb_cli.py --all-pairs
+
+# Simulate with custom capital size (e.g. £200 future monthly balance)
+python3 src/arb_cli.py --capital 200
+```
+
