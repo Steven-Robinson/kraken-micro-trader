@@ -94,22 +94,28 @@ class TestDepositDetection(unittest.TestCase):
         self.assertFalse(mock_send_alert.called)
 
     def test_dynamic_capital_and_fee_buffer_split(self):
-        """Verify dynamic capital splits tradeable pool across pairs and protects permanent fee buffer."""
-        # On £50 total equity: min £2.00 fee buffer applied
-        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("50.00")}
-        self.mock_client.get_trade_balance.return_value = {"eb": Decimal("50.00")}
+        """Verify dynamic capital splits tradeable pool across pairs, protects fee buffer and ring-fences arb capital."""
+        # On £80 total equity (£50 Ping-Pong + £30 ring-fenced Arb):
+        # Ping-Pong equity is £50.00 -> min £2.00 fee buffer applied -> £48.00 tradeable pool
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("80.00")}
+        self.mock_client.get_trade_balance.return_value = {"eb": Decimal("80.00")}
 
-        # Single pair: (£50 - £2.00) / 1 = £48.00
+        # Single pair: (£80 - £30 arb - £2.00 fee) / 1 = £48.00
         cap_1 = resolve_pair_capital(self.mock_client, num_pairs=1, fallback_capital=Decimal("48.00"))
         self.assertEqual(cap_1, Decimal("48.00"))
 
-        # Two pairs: (£50 - £2.00) / 2 = £24.00
+        # Two pairs: (£80 - £30 arb - £2.00 fee) / 2 = £24.00
         cap_2 = resolve_pair_capital(self.mock_client, num_pairs=2, fallback_capital=Decimal("24.00"))
         self.assertEqual(cap_2, Decimal("24.00"))
 
-        # On £200 total equity: 3% fee buffer (£6.00) applied
-        self.mock_client.get_trade_balance.return_value = {"eb": Decimal("200.00")}
+        # Three pairs: (£80 - £30 arb - £2.00 fee) / 3 = £16.00
+        cap_3 = resolve_pair_capital(self.mock_client, num_pairs=3, fallback_capital=Decimal("16.00"))
+        self.assertEqual(cap_3, Decimal("16.00"))
+
+        # On £230 total equity (£200 Ping-Pong + £30 Arb):
+        # Ping-Pong equity is £200.00 -> 3% fee buffer (£6.00) applied
         # (£200 - £6.00) / 2 = £97.00 per pair
+        self.mock_client.get_trade_balance.return_value = {"eb": Decimal("230.00")}
         cap_scaled = resolve_pair_capital(self.mock_client, num_pairs=2, fallback_capital=Decimal("24.00"))
         self.assertEqual(cap_scaled, Decimal("97.00"))
 

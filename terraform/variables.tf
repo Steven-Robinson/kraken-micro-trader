@@ -94,6 +94,12 @@ variable "fee_buffer_percent" {
   default     = "3.0"
 }
 
+variable "reserved_arb_capital_gbp" {
+  description = "Amount of GBP capital in Kraken reserved for the Arbitrage daemon (ring-fenced from Ping-Pong bot)"
+  type        = string
+  default     = "30.00"
+}
+
 # -----------------------------------------------------------------------------
 # EC2 Triangular Arbitrage Daemon Variables
 # -----------------------------------------------------------------------------
