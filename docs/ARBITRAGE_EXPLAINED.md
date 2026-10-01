@@ -57,9 +57,9 @@ Here is an actual opportunity captured by our bot on Kraken:
 
 ```mermaid
 flowchart LR
-    GBP1[£30.00 Cash] -->|Leg 1: Buy ALGO| ALGO[312.5 ALGO]
-    ALGO -->|Leg 2: Convert to ETH| ETH[0.0148 ETH]
-    ETH -->|Leg 3: Sell to GBP| GBP2[£30.22 Cash]
+    GBP1["£30.00 Cash"] -->|Leg 1: Buy ALGO| ALGO["312.5 ALGO"]
+    ALGO -->|Leg 2: Convert to ETH| ETH["0.0148 ETH"]
+    ETH -->|Leg 3: Sell to GBP| GBP2["£30.22 Cash"]
     
     style GBP1 fill:#d4edda,stroke:#28a745,color:#155724
     style GBP2 fill:#d4edda,stroke:#28a745,color:#155724
@@ -120,16 +120,16 @@ If an amateur bot encounters this, it freezes. You wake up holding £30 worth of
 
 ```mermaid
 flowchart TD
-    A[Opportunity Detected] --> B[Leg 1: IOC Limit Order]
-    B -->|Filled?| C{Leg 1 Fill?}
-    C -- "No (Price moved)" --> D[ABORT: £0 spent, 0 crypto held]
-    C -- "Yes" --> E[Leg 2: Cross Conversion]
-    E -->|Filled?| F{Leg 2 Fill?}
-    F -- "No (Error/Timeout)" --> G[🚨 Auto-Market Exit: Sell Asset A to GBP immediately]
-    F -- "Yes" --> H[Leg 3: Final GBP Conversion]
-    H -->|Filled?| I{Leg 3 Fill?}
-    I -- "No" --> J[🚨 Auto-Market Exit: Sell Asset B to GBP immediately]
-    I -- "Yes" --> K[🎉 Complete: Safe GBP in wallet + profit]
+    A["Opportunity Detected"] --> B["Leg 1: IOC Limit Order"]
+    B -->|Filled?| C{"Leg 1 Fill?"}
+    C -- "No (Price moved)" --> D["ABORT: £0 spent, 0 crypto held"]
+    C -- "Yes" --> E["Leg 2: Cross Conversion"]
+    E -->|Filled?| F{"Leg 2 Fill?"}
+    F -- "No (Error/Timeout)" --> G["🚨 Auto-Market Exit: Sell Asset A to GBP immediately"]
+    F -- "Yes" --> H["Leg 3: Final GBP Conversion"]
+    H -->|Filled?| I{"Leg 3 Fill?"}
+    I -- "No" --> J["🚨 Auto-Market Exit: Sell Asset B to GBP immediately"]
+    I -- "Yes" --> K["🎉 Complete: Safe GBP in wallet + profit"]
 ```
 
 ### 1. IOC Orders ("Immediate-Or-Cancel")

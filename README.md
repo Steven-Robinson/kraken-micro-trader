@@ -20,24 +20,24 @@ If you are new to automated algorithmic trading, read these friendly, jargon-fre
 
 ```mermaid
 flowchart TD
-    subgraph Kraken Pro Platform
-        KWS[Kraken WebSocket v2\nwss://ws.kraken.com/v2]
-        KREST[Kraken REST API\nhttps://api.kraken.com]
-        KOB[(Kraken Order Books\n78 Live Pairs)]
+    subgraph KRAKEN ["Kraken Pro Platform"]
+        KWS["Kraken WebSocket v2<br/>wss://ws.kraken.com/v2"]
+        KREST["Kraken REST API<br/>https://api.kraken.com"]
+        KOB[("Kraken Order Books<br/>78 Live Pairs")]
     end
 
-    subgraph AWS Dublin eu-west-1
-        subgraph Engine 1: Serverless Ping-Pong Bot (£0.00/mo)
-            EB[Amazon EventBridge\nCron: Every 2 Mins] -->|Trigger| L[AWS Lambda\nkraken-micro-trader]
-            L <-->|Read / Write State| DDB[(Amazon DynamoDB\nkraken_bot_state)]
-            L -->|Email Alerts| SNS[Amazon SNS\nkraken-trade-alerts]
+    subgraph AWS ["AWS Dublin eu-west-1"]
+        subgraph ENGINE1 ["Engine 1: Serverless Ping-Pong Bot (£0.00/mo)"]
+            EB["Amazon EventBridge<br/>Cron: Every 2 Mins"] -->|Trigger| L["AWS Lambda<br/>kraken-micro-trader"]
+            L <-->|Read / Write State| DDB[("Amazon DynamoDB<br/>kraken_bot_state")]
+            L -->|Email Alerts| SNS["Amazon SNS<br/>kraken-trade-alerts"]
             L <-->|Maker Limit Orders| KREST
         end
 
-        subgraph Engine 2: Real-Time WebSocket Arb Daemon (~£5.20/mo)
-            EC2[EC2 t4g.nano ARM64\ni-0b809d2522f8129a0]
+        subgraph ENGINE2 ["Engine 2: Real-Time WebSocket Arb Daemon (~£5.20/mo)"]
+            EC2["EC2 t4g.nano ARM64<br/>i-0b809d2522f8129a0"]
             EC2 <-->|Persistent WebSocket Stream| KWS
-            EC2 <-->|API Secrets| SSM[SSM Parameter Store]
+            EC2 <-->|API Secrets| SSM["SSM Parameter Store"]
             EC2 -->|Execution Alerts| SNS
             EC2 <-->|Atomic IOC Orders| KREST
         end
@@ -109,23 +109,23 @@ Total Kraken Equity: £78.78
 
 ```mermaid
 flowchart TD
-    Tick[WebSocket Ticker Update] --> Eval{Net Profit >= +0.30%?}
-    Eval -- No --> Skip[Log & Continue Watching]
-    Eval -- Yes --> CD{Cooldown > 60s & Cash >= £30?}
+    Tick["WebSocket Ticker Update"] --> Eval{"Net Profit >= +0.30%?"}
+    Eval -- No --> Skip["Log & Continue Watching"]
+    Eval -- Yes --> CD{"Cooldown > 60s & Cash >= £30?"}
     CD -- No --> Skip
-    CD -- Yes --> Leg1[Leg 1: IOC Limit Buy £30 on Leg1 Pair]
+    CD -- Yes --> Leg1["Leg 1: IOC Limit Buy £30 on Leg1 Pair"]
 
-    Leg1 --> Fill1{Leg 1 Filled?}
-    Fill1 -- No --> Abort[Clean Abort: £0 Spent, Zero Crypto Held]
-    Fill1 -- Yes --> Leg2[Leg 2: IOC Limit Conversion on Cross Pair]
+    Leg1 --> Fill1{"Leg 1 Filled?"}
+    Fill1 -- No --> Abort["Clean Abort: £0 Spent, Zero Crypto Held"]
+    Fill1 -- Yes --> Leg2["Leg 2: IOC Limit Conversion on Cross Pair"]
 
-    Leg2 --> Fill2{Leg 2 Filled?}
-    Fill2 -- No --> Emer1[🚨 Auto-Market Exit: Sell Asset A to GBP immediately]
-    Fill2 -- Yes --> Leg3[Leg 3: IOC Limit Conversion back to GBP]
+    Leg2 --> Fill2{"Leg 2 Filled?"}
+    Fill2 -- No --> Emer1["🚨 Auto-Market Exit: Sell Asset A to GBP immediately"]
+    Fill2 -- Yes --> Leg3["Leg 3: IOC Limit Conversion back to GBP"]
 
-    Leg3 --> Fill3{Leg 3 Filled?}
-    Fill3 -- No --> Emer2[🚨 Auto-Market Exit: Sell Asset B to GBP immediately]
-    Fill3 -- Yes --> Success[🎉 Cycle Complete: £30 Returned to Cash + Realized Profit]
+    Leg3 --> Fill3{"Leg 3 Filled?"}
+    Fill3 -- No --> Emer2["🚨 Auto-Market Exit: Sell Asset B to GBP immediately"]
+    Fill3 -- Yes --> Success["🎉 Cycle Complete: £30 Returned to Cash + Realized Profit"]
 ```
 
 * **Immediate-Or-Cancel (IOC):** Leg 1 is submitted with `timeinforce = "IOC"`. If the price moves or volume is unavailable, it cancels instantly. Zero money lost, zero crypto exposure.
