@@ -18,17 +18,20 @@ The AI will immediately know the entire system state, architecture, and current 
 Both engines run **100% in the AWS cloud (Dublin `eu-west-1`)**, not on your local computer. Your Mac Mini and MacBook are simply remote-control dashboards.
 
 ```
-Total Portfolio Equity: ~£78.26 (Unified Kraken Pro Account)
+Total Portfolio Equity: ~£78.08 (Free Cash: £19.79 | Unified Kraken Pro Account)
  │
  ├── Engine 1: Micro-Grid & Ping-Pong Maker (AWS Lambda, £0.00/mo Forever)
- │     • Allocation: £78.26 across 3 pairs (~£25.30/pair)
- │     • Permanent Fee Buffer: £2.35 (Safety reserve)
+ │     • Allocation: £78.08 across 3 pairs (~£25.25/pair)
+ │     • Permanent Fee Buffer: £2.34 (Safety reserve)
+ │     • Realized Profit To Date: +£0.1675 (1 cycle completed)
+ │     • BTCGBP: [2-RUNG MICRO-GRID LIVE] (Upgraded after £63,909.60 sell fill!)
+ │         - Rung 1 (50%): BUY_PLACED @ £63,509.3 (-0.60% dip) | Target: +1.00%
+ │         - Rung 2 (50%): IDLE (Queued to deploy buy order)
  │     • ETHGBP: [2-RUNG MICRO-GRID LIVE]
- │         - Rung 1 (50%): BUY_PLACED @ £2,028.14 (-0.60% dip) | Target: +1.00%
+ │         - Rung 1 (50%): SELL_PLACED @ £2,058.56 (Holding 0.00623724 ETH, +£0.13 profit on fill)
  │         - Rung 2 (50%): BUY_PLACED @ £2,011.81 (-1.40% dip) | Target: +1.20%
- │     • BTCGBP: [LEGACY SINGLE-ORDER] Holding BTC @ £62,915.60 | Limit Sell resting @ £63,909.60 (+£0.17 on fill)
  │     • SOLGBP: [LEGACY SINGLE-ORDER] Holding SOL @ £88.62 | Limit Sell resting @ £90.59 (+£0.27 on fill)
- │       (Note: BTC and SOL automatically upgrade to 2-Rung Grid upon sell fill)
+ │       (Note: SOL automatically upgrades to 2-Rung Grid upon sell fill)
  │
  └── Engine 2: Triangular Arbitrage Daemon (EC2 Dublin) [STOPPED / DECOMMISSIONED]
        • Instance: i-0b809d2522f8129a0 (STOPPED — Compute billing halted, saving ~£35/year)
