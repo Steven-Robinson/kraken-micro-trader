@@ -24,9 +24,3 @@ alert_email = "you@example.com"
 
 # Multi-pair basket
 trading_pairs = "SOLGBP,ETHGBP,BTCGBP"
-
-# EC2 WebSocket Triangular Arbitrage Daemon
-enable_ec2_arb_daemon = true
-ec2_instance_type     = "t4g.nano"
-arb_capital_gbp       = "30.00"
-arb_dry_run           = false

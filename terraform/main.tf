@@ -173,7 +173,6 @@ resource "aws_lambda_function" "crypto_bot" {
       DYNAMIC_CAPITAL_ENABLED   = tostring(var.dynamic_capital_enabled)
       MIN_FEE_BUFFER_GBP        = var.min_fee_buffer_gbp
       FEE_BUFFER_PERCENT        = var.fee_buffer_percent
-      RESERVED_ARB_CAPITAL_GBP  = var.reserved_arb_capital_gbp
     }
   }
 

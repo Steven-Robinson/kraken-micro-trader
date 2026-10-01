@@ -22,7 +22,6 @@ from config import (
     MIN_FEE_BUFFER_GBP,
     MIN_PROFIT_TARGET_PERCENT,
     PROFIT_TARGET_PERCENT,
-    RESERVED_ARB_CAPITAL_GBP,
     ROUND_TRIP_FEE_PERCENT,
     SNS_TOPIC_ARN,
     TRADING_PAIR,
@@ -159,15 +158,13 @@ def resolve_pair_capital(
     num_pairs: int,
     fallback_capital: Decimal,
 ) -> Decimal:
-    """Dynamically determine capital per active pair, reserving a permanent fee buffer
-    and ring-fencing funds reserved for the Arbitrage daemon.
+    """Dynamically determine capital per active pair, reserving a permanent fee buffer.
 
     Formula:
         1. Fetch Total Portfolio Equity (eb = cash + crypto value) from TradeBalance.
-        2. Subtract ring-fenced arbitrage capital (RESERVED_ARB_CAPITAL_GBP).
-        3. Calculate permanent fee buffer: max(MIN_FEE_BUFFER_GBP, Ping-Pong Equity * FEE_BUFFER_PERCENT / 100).
-        4. Tradeable pool = Ping-Pong Equity - Fee Buffer.
-        5. Target per pair = Tradeable pool / num_pairs.
+        2. Calculate permanent fee buffer: max(MIN_FEE_BUFFER_GBP, Total Equity * FEE_BUFFER_PERCENT / 100).
+        3. Tradeable pool = Total Equity - Fee Buffer.
+        4. Target per pair = Tradeable pool / num_pairs.
     """
     safe_fallback = (fallback_capital / Decimal(num_pairs)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     if not DYNAMIC_CAPITAL_ENABLED or client.dry_run:
@@ -179,21 +176,16 @@ def resolve_pair_capital(
         free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
         total_equity = Decimal(str(tb.get("eb", free_cash)))
 
-        # Ring-fence capital for Arbitrage daemon
-        pingpong_equity = max(Decimal("0"), total_equity - RESERVED_ARB_CAPITAL_GBP)
-
         # Permanent fee buffer: min £2.00, or 3% on larger balances
-        fee_buffer = max(MIN_FEE_BUFFER_GBP, pingpong_equity * (FEE_BUFFER_PERCENT / Decimal("100")))
-        tradeable_pool = max(Decimal("0"), pingpong_equity - fee_buffer)
+        fee_buffer = max(MIN_FEE_BUFFER_GBP, total_equity * (FEE_BUFFER_PERCENT / Decimal("100")))
+        tradeable_pool = max(Decimal("0"), total_equity - fee_buffer)
 
         # Fair share per pair
         target_per_pair = (tradeable_pool / Decimal(num_pairs)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
         logger.info(
-            "Dynamic Capital Pool: Total Equity=£%s, Reserved Arb=£%s, Ping-Pong Equity=£%s, Fee Buffer=£%s -> Target/Pair=£%s (N=%d)",
+            "Dynamic Capital Pool: Total Equity=£%s, Fee Buffer=£%s -> Target/Pair=£%s (N=%d)",
             total_equity,
-            RESERVED_ARB_CAPITAL_GBP,
-            pingpong_equity,
             fee_buffer,
             target_per_pair,
             num_pairs,

@@ -95,7 +95,7 @@ class TestDepositDetection(unittest.TestCase):
 
     def test_dynamic_capital_and_fee_buffer_split(self):
         """Verify dynamic capital splits tradeable pool across pairs and protects fee buffer."""
-        # On £80 total equity (£0 ring-fenced Arb):
+        # On £80 total equity:
         # 3% fee buffer (£2.40) applied -> £77.60 tradeable pool
         self.mock_client.get_balance.return_value = {"ZGBP": Decimal("80.00")}
         self.mock_client.get_trade_balance.return_value = {"eb": Decimal("80.00")}
