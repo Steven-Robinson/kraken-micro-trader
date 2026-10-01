@@ -16,8 +16,8 @@ except ImportError:
 # --- General Trading Parameters ---
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
 
-# Multi-pair support (comma-separated list, e.g. "SOLGBP" or "SOLGBP,ETHGBP")
-TRADING_PAIRS_RAW = os.getenv("TRADING_PAIRS", os.getenv("TRADING_PAIR", "SOLGBP"))
+# Multi-pair support (comma-separated list, e.g. "SOLGBP,ETHGBP,BTCGBP")
+TRADING_PAIRS_RAW = os.getenv("TRADING_PAIRS", os.getenv("TRADING_PAIR", "SOLGBP,ETHGBP,BTCGBP"))
 TRADING_PAIRS = [p.strip().upper() for p in TRADING_PAIRS_RAW.split(",") if p.strip()]
 
 # Default primary pair (for backwards compatibility)
