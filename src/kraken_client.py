@@ -190,6 +190,18 @@ class KrakenClient:
         result = self._request("/0/private/TradeBalance", data={"asset": asset}, is_private=True)
         return {k: Decimal(str(v)) for k, v in result.items()}
 
+    def get_open_orders(self, force_refresh: bool = False) -> dict[str, Any]:
+        """Fetch all currently open orders (cached per client instance)."""
+        if hasattr(self, "_open_orders_cache") and self._open_orders_cache is not None and not force_refresh:
+            return self._open_orders_cache
+
+        if self.dry_run and self.api_key == "mock_api_key":
+            return {}
+
+        result = self._request("/0/private/OpenOrders", is_private=True)
+        self._open_orders_cache = result.get("open", {})
+        return self._open_orders_cache
+
     def place_order(
         self,
         pair: str,
@@ -252,6 +264,7 @@ class KrakenClient:
         if not txids:
             raise KrakenAPIError(f"No txid returned from AddOrder: {result}")
 
+        self._open_orders_cache = None
         return txids[0]
 
     def place_limit_order(
@@ -318,4 +331,5 @@ class KrakenClient:
         result = self._request(
             "/0/private/CancelOrder", data={"txid": txid}, is_private=True
         )
+        self._open_orders_cache = None
         return result.get("count", 0) > 0

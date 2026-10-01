@@ -105,10 +105,25 @@ def process_grid_pair(
     ticker = client.get_ticker(pair)
     best_bid = ticker["bid"]
 
-    # Protect fee buffer from available free cash
+    # Protect fee buffer from available free cash, accounting for cash already locked in open buy orders
     balances = client.get_balance()
-    free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
-    available_cash = max(Decimal("0"), free_cash - MIN_FEE_BUFFER_GBP)
+    total_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
+
+    committed_buy_cash = Decimal("0.0")
+    try:
+        if hasattr(client, "get_open_orders"):
+            open_orders = client.get_open_orders()
+            for _, order in open_orders.items():
+                descr = order.get("descr", {})
+                if descr.get("type") == "buy":
+                    rem_vol = Decimal(str(order.get("vol", "0"))) - Decimal(str(order.get("vol_exec", "0")))
+                    price = Decimal(str(descr.get("price", "0")))
+                    committed_buy_cash += (rem_vol * price)
+    except Exception as e:
+        logger.debug("[%s] Could not calculate committed buy cash: %s", pair, e)
+
+    truly_free_cash = max(Decimal("0"), total_cash - committed_buy_cash)
+    available_cash = max(Decimal("0"), truly_free_cash - MIN_FEE_BUFFER_GBP)
 
     # Optional dynamic volatility scaling for profit target
     dynamic_markup = Decimal("0.0")
