@@ -1,250 +1,208 @@
-# Kraken Micro-Trader (AWS Serverless)
+# Kraken Dual-Engine Autonomous Trading System
 
-An autonomous, low-cost cryptocurrency micro-trading bot running on AWS Lambda. It executes a **Ping-Pong / Limit-Order Mean-Reversion** strategy directly in **Pounds Sterling (£ GBP)** on **Kraken Pro** (e.g., `SOL/GBP`, `ETH/GBP`, `BTC/GBP`).
+An institutional-grade, low-cost algorithmic trading platform executing two complementary strategies directly in **Pounds Sterling (£ GBP)** on **Kraken Pro**:
 
----
-
-## 1. Overview & Strategy
-
-The bot is designed to trade with modest starter capital (**£50**) while maximizing fee efficiency and avoiding cloud hosting costs:
-
-* **Maker-Only Limit Orders:** Submits limit orders directly to Kraken's order book. This qualifies for Kraken Pro's lower Maker fee (**0.25%**) instead of the 0.40% Taker fee, eliminating market slippage.
-* **Native GBP Trading:** Trades directly in British Pounds. No currency conversions, no stablecoin exchange rate risks, and no wire transfer fees.
-* **Ping-Pong Cycle:**
-  1. `BUY`: Submits a Limit Buy order at/slightly below current market bid.
-  2. `WAIT`: Kraken's matching engine monitors the market 24/7. Lambda only wakes up periodically to check fill status.
-  3. `SELL`: When the buy order fills, the bot immediately calculates the target profit price (`+0.8%` to `+3.0%` net of fees) and places a Limit Sell order.
-  4. `REPEAT`: When the sell order fills, profit is locked in, and a new re-entry buy order is queued.
-* **Dynamic Half-Spread Volatility Engine:** Rather than relying on a static target, the bot evaluates the trailing 24-hour candlestick spread (`(High - Low) / Low`). It takes **50% of the daily spread** (the average mean-to-extreme amplitude), and aims to capture **75% of that half-spread** (`Spread % * 0.375`). Clamped between `0.8%` and `3.0%`, this ensures the profit target stays realistically within reach without needing to break daily highs.
-* **Multi-Pair Concurrent Scaling:** A single Lambda and DynamoDB table can trade multiple uncorrelated pairs (e.g. `SOLGBP,ETHGBP,BTCGBP`) concurrently with independent state machines and zero extra infrastructure cost.
-* **100% Free-Tier Architecture:** Built on AWS serverless primitives (Lambda, EventBridge, DynamoDB, Systems Manager, SNS), resulting in £0.00 monthly cloud hosting costs.
+1. **Engine 1 (AWS Lambda, £0.00/mo):** Multi-Pair Volatility Ping-Pong Bot trading major pairs (`SOL/GBP`, `ETH/GBP`, `BTC/GBP`) using Maker limit orders and dynamic ATR volatility pricing.
+2. **Engine 2 (AWS EC2 Dublin, ~£5.20/mo):** Real-time WebSocket v2 Triangular Arbitrage Daemon monitoring 57 triangles (78 pairs) with sub-15ms execution latency, dedicated to a ring-fenced **£30.00 capital pool**.
 
 ---
 
-## 2. Architecture
+## 📚 Plain-English Beginner Guides ("Idiot's Guides")
+
+If you are new to automated algorithmic trading, read these friendly, jargon-free guides:
+
+* 📖 **[The Idiot's Guide to Triangular Arbitrage](docs/ARBITRAGE_EXPLAINED.md):** How your £30 turns into £30.25 in 2 seconds without gambling on crypto prices (the airport currency exchange analogy, real examples, fees, and safety nets).
+* 📖 **[The Idiot's Guide to Volatility Ping-Pong](docs/PING_PONG_EXPLAINED.md):** How the bot buys dips, sells slight pumps, captures daily market waves, and why it costs £0.00 in cloud fees.
+
+---
+
+## 1. High-Level System Architecture
 
 ```mermaid
 flowchart TD
-    EB[Amazon EventBridge\nCron: Every 2 Mins] -->|Trigger| L[AWS Lambda\nMulti-Pair Coordinator]
-    
-    subgraph MultiPair [Independent State Engines]
-        P1[SOLGBP-PINGPONG]
-        P2[ETHGBP-PINGPONG]
-        P3[BTCGBP-PINGPONG]
+    subgraph Kraken Pro Platform
+        KWS[Kraken WebSocket v2\nwss://ws.kraken.com/v2]
+        KREST[Kraken REST API\nhttps://api.kraken.com]
+        KOB[(Kraken Order Books\n78 Live Pairs)]
     end
-    
-    L --> P1
-    L --> P2
-    L --> P3
-    
-    L <-->|Read / Write State| DDB[(Amazon DynamoDB\nState Table)]
-    L <-->|Fetch API Secrets| SSM[AWS Systems Manager\nParameter Store]
-    L -->|Trade Alerts| SNS[Amazon SNS\nEmail Alerts]
-    
-    L <-->|REST API\nHMAC-SHA512 Auth| KP[Kraken Pro API]
-    KP <-->|Matching Engine| OB[(Kraken Order Book)]
+
+    subgraph AWS Dublin eu-west-1
+        subgraph Engine 1: Serverless Ping-Pong Bot (£0.00/mo)
+            EB[Amazon EventBridge\nCron: Every 2 Mins] -->|Trigger| L[AWS Lambda\nkraken-micro-trader]
+            L <-->|Read / Write State| DDB[(Amazon DynamoDB\nkraken_bot_state)]
+            L -->|Email Alerts| SNS[Amazon SNS\nkraken-trade-alerts]
+            L <-->|Maker Limit Orders| KREST
+        end
+
+        subgraph Engine 2: Real-Time WebSocket Arb Daemon (~£5.20/mo)
+            EC2[EC2 t4g.nano ARM64\ni-0b809d2522f8129a0]
+            EC2 <-->|Persistent WebSocket Stream| KWS
+            EC2 <-->|API Secrets| SSM[SSM Parameter Store]
+            EC2 -->|Execution Alerts| SNS
+            EC2 <-->|Atomic IOC Orders| KREST
+        end
+    end
+
+    KWS <--> KOB
+    KREST <--> KOB
 ```
 
 ---
 
-## 3. Dynamic Volatility Formula
+## 2. Comparison of the Two Engines
 
-To prevent placing sell orders stranded above recent market resistance, the bot dynamically calculates profit targets using the trailing 24-hour hourly candles:
-
-$$\text{24h Spread \%} = \frac{\text{24h High} - \text{24h Low}}{\text{24h Low}} \times 100$$
-
-$$\text{Dynamic Target \%} = (\text{24h Spread \%} \times 0.50) \times 0.75$$
-
-$$\text{Target Sell Price} = \text{Entry Buy Price} \times \left(1 + \frac{\text{Dynamic Target \%} + \text{Round-Trip Fees (0.50\%)}}{100}\right)$$
-
-* **Safety Clamps:** Targets are clamped between `0.8%` (minimum floor to guarantee fee coverage) and `3.0%` (maximum ceiling to maintain fast cycle turnover).
-
----
-
-## 4. Example Trade Flow Walkthrough
-
-Here is an end-to-end trace of how the bot handles orders across single and multi-pair operations:
-
-### Scenario A: Single-Pair Cycle (`SOL/GBP`)
-
-```text
-[Step 1: IDLE ➔ BUY_PLACED]
-  • Market Bid: £89.95
-  • Maker Discount (0.2%): Buy Limit set to £89.95 (post-only)
-  • Volume: £48.00 / £89.95 = 0.5336 SOL
-  • Action: Limit Buy order OTI5HL... posted to Kraken order book.
-  • State: Transition to BUY_PLACED in DynamoDB.
-
-[Step 2: BUY_PLACED ➔ FILL DETECTED]
-  • 2 minutes later, EventBridge invokes Lambda.
-  • Kraken reports order OTI5HL... is "closed" (filled @ £89.95).
-  • Capital Deployed: £48.00. Holding: 0.5336 SOL.
-
-[Step 3: DYNAMIC VOLATILITY PRICING]
-  • Bot analyzes last 24h hourly candles:
-    - 24h Low: £88.81 | 24h High: £92.36 (Spread: 4.00%)
-    - 50% Half-Spread: 2.00%
-    - 75% Capture Target: +1.50% net profit
-  • Gross Markup: +1.50% (net) + 0.50% (fees) = +2.00%
-  • Target Sell Price: £89.95 * 1.02 = £91.75 (or £90.85 fast target)
-
-[Step 4: SUBMIT LIMIT SELL]
-  • Submits post-only Limit Sell: 0.5336 SOL @ £91.75.
-  • Action: Order OED4YA... posted to Kraken order book.
-  • State: Transition to SELL_PLACED in DynamoDB.
-  • Alert: Amazon SNS sends trade confirmation email to user.
-
-[Step 5: SELL FILL & PROFIT REALIZATION]
-  • SOL spikes to £92.10 during the day; order fills at £91.75!
-  • Gross Revenue: 0.5336 * £91.75 = £48.96
-  • Kraken Maker Fees (0.25% buy + 0.25% sell): £0.24
-  • Net Profit Locked In: +£0.72 (+1.50% ROI on the £48 allocation)
-  • DynamoDB Updated: trades_completed = 1, total_realized_profit_gbp = £0.72
-
-[Step 6: AUTOMATIC RE-ENTRY]
-  • Re-entry price calculated below £91.75 exit.
-  • New Limit Buy order immediately submitted on Kraken.
-  • Cycle repeats automatically.
-```
-
----
-
-### Scenario B: Concurrent Multi-Pair Ping-Pong (`SOL/GBP` + `ETH/GBP`)
-
-When multiple pairs are enabled, each pair operates as an isolated state machine:
-
-```text
-EventBridge Trigger (Every 2 Minutes)
-  │
-  ├── Pair 1: SOLGBP-PINGPONG (State: SELL_PLACED)
-  │     • Checks resting sell order @ £90.85.
-  │     • Order still open (waiting).
-  │     • Action: No change, continues holding 0.5336 SOL.
-  │
-  └── Pair 2: ETHGBP-PINGPONG (State: BUY_PLACED)
-        • Checks resting buy order @ £2,010.50.
-        • Fill detected!
-        • Evaluates ETH 24h volatility spread (3.2%).
-        • Immediately posts Limit Sell @ £2,034.60 (+1.2% net).
-        • State transitions to SELL_PLACED.
-```
-
----
-
-## 5. Financial Model & Dynamic Capital Scaling
-
-| Parameter | Default Value | Description |
+| Feature | Engine 1: Ping-Pong Maker | Engine 2: Triangular Arbitrage |
 | :--- | :--- | :--- |
-| **Trading Pair(s)** | `SOLGBP`, `ETHGBP` | High liquidity on Kraken, frequent 2-4% daily oscillations |
-| **Capital Allocation** | Dynamic Fair Share | `(Total Equity - Permanent Fee Buffer) / Active Pairs` |
-| **Permanent Fee Buffer**| `max(£2.00, Equity * 3%)` | Strictly reserved cash kept untouched for fee coverage |
-| **Dynamic Target** | `+0.80% – +3.00%` | Half-spread capture calibrated to prevailing 24h market swing |
-| **Maker Fee (Buy)** | `0.25%` | Standard Kraken Pro maker fee tier |
-| **Maker Fee (Sell)**| `0.25%` | Standard Kraken Pro maker fee tier |
-| **Total Round-Trip Fee**| `0.50%` | Fixed fee cost per completed cycle (~£0.24 on £48) |
-| **Net Profit / Cycle** | `+£0.24 – +£0.80` | Realized profit locked in per trade after all fees |
+| **Strategy** | Mean-reversion grid / swing trading | Delta-neutral triangular price lag |
+| **Execution Hosting** | AWS Lambda (Serverless) | AWS EC2 `t4g.nano` (Persistent daemon) |
+| **Colocation** | Cloud general (`eu-west-1`) | Colocated in Dublin `<15ms` from Kraken |
+| **Cloud Cost** | **£0.00 / month** (Free tier perpetual) | **~£5.20 / month** (£1.85 EC2 + £2.85 IPv4) |
+| **Directional Risk** | Holds blue-chip crypto (`BTC, ETH, SOL`) during dips | **Zero directional risk** (holds crypto for <2 seconds) |
+| **Order Style** | Passive Maker limit orders (0.25% fee) | Atomic Immediate-Or-Cancel (IOC) limit orders |
+| **Cycle Duration** | Hours to days (market swing dependent) | **Sub-second** (300ms – 2 seconds) |
+| **Target Profit** | `+0.80% – +3.00%` per completed cycle | `+0.30% – +1.50%` per completed triangle |
+| **Capital Allocation** | Dynamic share of non-arbitrage equity | **£30.00** strictly ring-fenced |
 
 ---
 
-## 6. Automatic Deposit Detection & Email Alerts
+## 3. Capital Partitioning & Ring-Fencing
 
-Whenever you transfer additional cash from your UK bank account to Kraken (e.g. monthly top-ups via Faster Payments):
+Kraken accounts use a single unified British Pound wallet. To allow both bots to trade concurrently without fighting for capital, a strict mathematical ring-fence is enforced in software:
 
-1. **Automatic Detection:** On each 2-minute EventBridge iteration, the bot compares current free cash (`ZGBP`) and total portfolio equity (`eb` from `/0/private/TradeBalance`) against the previous baseline in DynamoDB (`PORTFOLIO-METADATA`).
-2. **False-Positive Immunity:** A true external bank deposit causes **both** cash and total equity to increase together by the deposit amount ($\ge £5.00$). When a sell order fills, cash increases but equity remains unchanged (except for the minor trade profit), guaranteeing zero false deposit alarms from normal trade fills.
-3. **Instant Email Alert via Amazon SNS:** When a deposit is verified, an alert email is immediately dispatched to your registered email:
-   ```text
-   Subject: [Kraken Micro-Trader] New Deposit Detected! (+£50.00 Added to Trading)
+$$\text{Ping-Pong Equity} = \max(0, \text{Total Account Equity} - \mathbf{£30.00 \text{ (Arb Pool)}})$$
 
-   We detected a new cash deposit on your Kraken account! 🎉
+$$\text{Ping-Pong Tradeable Pool} = \max(0, \text{Ping-Pong Equity} - \mathbf{£2.00 \text{ (Fee Buffer)}})$$
 
-   • Deposit Amount: +£50.00
-   • Total Available Cash: £51.81
-   • Total Portfolio Equity: £99.56
-   • Preserved Fee Buffer: £2.99
-   • Updated Capital per Pair (N=2): £48.28
+$$\text{Per-Pair Ping-Pong Allocation} = \frac{\text{Ping-Pong Tradeable Pool}}{N \text{ (Active Pairs)}}$$
 
-   The bot has automatically added these funds to your trading pool. Future buy orders will trade with your scaled capital.
-   ```
-4. **Permanent Fee Buffer:** The bot always calculates and isolates a permanent fee buffer (`max(£2.00, equity * 3%)`) before deploying funds. Even if an order executes, this buffer remains in uncommitted GBP cash so that fees can never deplete your active trading balances.
-5. **Seamless Capital Scaling:** The remaining tradeable pool is split fairly across all active pairs (`tradeable_pool / N`). Subsequent re-entry orders automatically trade with the increased capital.
-
----
-
-## 7. Multi-Pair "Switch" Configuration
-
-To scale from single-pair to multi-pair trading:
-
-1. Open `terraform/terraform.tfvars`:
-   ```hcl
-   # Single pair:
-   trading_pairs = "SOLGBP"
-
-   # Multi-pair:
-   trading_pairs = "SOLGBP,ETHGBP"
-   ```
-2. Apply with OpenTofu:
-   ```bash
-   cd terraform && tofu apply -auto-approve
-   ```
-3. The Lambda function automatically provisions the state for each pair and begins concurrent execution.
+```
+Total Kraken Equity: £78.78
+ │
+ ├── [Engine 2] Dedicated Arbitrage Pool:  £30.00 (Isolated, untouched by Ping-Pong)
+ └── [Engine 1] Ping-Pong Equity:           £48.78
+       ├── Permanent Uncommitted Fee Buffer: £2.00 (Safety floor for exchange fees)
+       └── Tradeable Ping-Pong Pool:        £46.78
+             ├── Pair 1 (SOLGBP):           £15.59 (Limit Buy active @ £88.62)
+             ├── Pair 2 (ETHGBP):           £15.59 (Limit Buy active @ £2,020.50)
+             └── Pair 3 (BTCGBP):           £15.59 (Filled! Limit Sell @ £63,909.60)
+```
 
 ---
 
-## 8. Security & Safety Controls
+## 4. Engine 1: Multi-Pair Volatility Ping-Pong
 
-1. **Least-Privilege API Keys:** Uses Kraken API keys configured with **"Query Funds"** and **"Create & Cancel Orders"** only. Withdrawal permissions are disabled.
-2. **Post-Only Orders (`oflags = post`):** Ensures all orders rest on the book as Maker orders. If an order would cross as a Taker (higher fee), Kraken rejects it automatically.
-3. **Zero-Dependency Core:** Built using Python's standard library (`urllib`, `hmac`, `hashlib`, `json`, `decimal`).
-4. **AWS Parameter Store:** API Key and Secret are encrypted in AWS SSM Parameter Store (`SecureString`) and fetched dynamically at runtime.
+### How It Works:
+1. **Dynamic Volatility Pricing:** Evaluates the trailing 24-hour candlestick range (`(High - Low) / Low`). Takes 50% of the daily spread, capturing 75% of that half-spread (`Spread % * 0.375`). Clamped between `0.8%` and `3.0%`.
+2. **Maker-Only Execution:** Every buy and sell is submitted with `oflags = post`. If an order would cross as a taker, Kraken rejects it automatically, ensuring we never pay more than 0.25% in fees.
+3. **Automated Bank Deposit Detection:** On each 2-minute cycle, the bot checks if both cash and equity increased by $\ge £5.00$. If verified, it automatically scales up future orders and notifies you via email.
+4. **No Panic Selling:** If a coin dips, the bot patiently holds the coins until the price recovers to the profit target.
 
 ---
 
-## 9. Daily Operations Cheat Sheet
+## 5. Engine 2: Real-Time WebSocket Triangular Arbitrage
 
+### How It Works:
+1. **Sub-15ms Latency in Dublin:** The daemon maintains a persistent WebSocket v2 connection to `wss://ws.kraken.com/v2`.
+2. **Continuous Tick Evaluation:** Evaluates both **FORWARD** (`GBP -> Asset A -> Asset B -> GBP`) and **REVERSE** (`GBP -> Asset B -> Asset A -> GBP`) cycles on every incoming price tick across 57 priority triangles.
+3. **Net Profit Hurdle (+0.30%):** Enforces that net profit after all 3 trade fees must exceed +0.30%.
+4. **Atomic 3-Leg Execution Pipeline with Emergency Rescue:**
+
+```mermaid
+flowchart TD
+    Tick[WebSocket Ticker Update] --> Eval{Net Profit >= +0.30%?}
+    Eval -- No --> Skip[Log & Continue Watching]
+    Eval -- Yes --> CD{Cooldown > 60s & Cash >= £30?}
+    CD -- No --> Skip
+    CD -- Yes --> Leg1[Leg 1: IOC Limit Buy £30 on Leg1 Pair]
+
+    Leg1 --> Fill1{Leg 1 Filled?}
+    Fill1 -- No --> Abort[Clean Abort: £0 Spent, Zero Crypto Held]
+    Fill1 -- Yes --> Leg2[Leg 2: IOC Limit Conversion on Cross Pair]
+
+    Leg2 --> Fill2{Leg 2 Filled?}
+    Fill2 -- No --> Emer1[🚨 Auto-Market Exit: Sell Asset A to GBP immediately]
+    Fill2 -- Yes --> Leg3[Leg 3: IOC Limit Conversion back to GBP]
+
+    Leg3 --> Fill3{Leg 3 Filled?}
+    Fill3 -- No --> Emer2[🚨 Auto-Market Exit: Sell Asset B to GBP immediately]
+    Fill3 -- Yes --> Success[🎉 Cycle Complete: £30 Returned to Cash + Realized Profit]
+```
+
+* **Immediate-Or-Cancel (IOC):** Leg 1 is submitted with `timeinforce = "IOC"`. If the price moves or volume is unavailable, it cancels instantly. Zero money lost, zero crypto exposure.
+* **Auto-Market Exit Safeguard:** If an intermediate leg fails, the engine triggers an instant market sell back to GBP, guaranteeing you never hold stranded cryptocurrency.
+* **60-Second Cooldown:** Stops the engine from spamming orders if a pair's book becomes erratic.
+
+---
+
+## 6. Financial Model & Cloud Cost Economics
+
+The EC2 virtual server hosting the arbitrage daemon costs **~£5.20 per month** (~17p / day). Because server cost is fixed and trade returns scale with balance:
+
+| Capital Deployed | Return / Trade (+0.35%) | Monthly Gross (3 trades/day) | Cloud Cost | **Net Monthly Profit** |
+| :--- | :--- | :--- | :--- | :--- |
+| **£30.00** | £0.105 | £9.45 | £5.20 | **+£4.25** |
+| **£50.00** | £0.175 | £15.75 | £5.20 | **+£10.55** |
+| **£100.00** | £0.350 | £31.50 | £5.20 | **+£26.30** |
+| **£250.00** *(Cap)* | £0.875 | £78.75 | £5.20 | **+£73.55** |
+
+*(Plus, the Ping-Pong bot on Lambda is completely free and generates independent profits on major daily market swings).*
+
+---
+
+## 7. Daily Operations & CLI Cheat Sheet
+
+### View Live Unified Dashboard:
 ```bash
-# Check live multi-pair status (state, prices, active orders, realized profit)
 python3 src/status.py
+```
 
-# Stream live execution logs in real-time
+### Inspect EC2 Arbitrage Daemon via AWS Systems Manager:
+```bash
+# Check daemon service status
+aws ssm send-command \
+  --instance-ids "i-0b809d2522f8129a0" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["systemctl status kraken-arb.service --no-pager"]' \
+  --region eu-west-1
+
+# View recent live arbitrage logs
+aws ssm send-command \
+  --instance-ids "i-0b809d2522f8129a0" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=["journalctl -u kraken-arb.service -n 30 --no-pager"]' \
+  --region eu-west-1
+```
+
+### Inspect Lambda Ping-Pong Logs:
+```bash
 aws logs tail /aws/lambda/kraken-micro-trader --region eu-west-1 --follow
+```
 
-# Resume / Enable automated 2-minute trading
-aws events enable-rule --name kraken-trader-schedule --region eu-west-1
-
-# Pause / Disable automated trading
+### Pause / Resume Ping-Pong Bot:
+```bash
+# Pause 2-minute EventBridge cron
 aws events disable-rule --name kraken-trader-schedule --region eu-west-1
+
+# Resume 2-minute EventBridge cron
+aws events enable-rule --name kraken-trader-schedule --region eu-west-1
 ```
 
 ---
 
-## 10. Intra-Exchange Triangular Arbitrage Engine
+## 8. Automated Testing
 
-The repository also includes an opportunistic **Triangular Arbitrage Engine** designed to exploit momentary pricing lags across Kraken's native order books (`GBP -> Asset A -> Asset B -> GBP`).
+The repository includes a comprehensive unit test suite covering capital sizing, volatility mathematics, triangular routing, IOC order lifecycles, and emergency liquidation safeguards:
 
-### Why It Complements the Micro-Trader:
-1. **Zero Directional Market Risk:** Unlike directional ping-pong trades which hold crypto while waiting for a price target, triangular cycles complete in seconds and return capital immediately to pure GBP.
-2. **Shares the Existing Capital Pool:** Operates whenever funds are in cash. Zero extra capital required.
-3. **Monthly Capital Auto-Scaling:** As you add monthly cash deposits, the engine automatically scales its trade size up (`(Free Cash - Fee Buffer)`), while strictly protecting the permanent fee buffer (`max(£2.00, equity * 3%)`) and clamping to top-of-book depth to prevent slippage.
-4. **Verified Live Spreads on Kraken:**
-   ```text
-   • BCH <-> ETH (BCHETH) [MAKER]: Gross +1.45% | Net +0.70% (+£0.31 net on £45)
-   • FIL <-> ETH (FILETH) [MAKER]: Gross +1.10% | Net +0.35% (+£0.16 net on £45)
-   • BCH <-> USDC (BCHUSDC) [MAKER]: Gross +0.99% | Net +0.23% (+£0.10 net on £45)
-   ```
-
-### Daily Triangular Operations:
 ```bash
-# Snapshot scan of live Kraken order books for net-profitable opportunities
-python3 src/arb_cli.py --scan
-
-# Continuous real-time monitor polling every 5 seconds
-python3 src/arb_cli.py --monitor
-
-# Scan all 78 mapped triangles (including lower-liquidity altcoin crosses)
-python3 src/arb_cli.py --all-pairs
-
-# Simulate with custom capital size (e.g. £200 future monthly balance)
-python3 src/arb_cli.py --capital 200
+# Run all unit tests
+python3 -m unittest discover tests
 ```
 
+---
+
+## 9. Security & Safety Principles
+
+1. **Restricted API Keys:** Uses Kraken API keys restricted to **"Query Funds"** and **"Create & Cancel Orders"** only. Withdrawal permissions are disabled.
+2. **Encrypted Parameter Storage:** Kraken API keys are stored in AWS Systems Manager (SSM) Parameter Store as `SecureString` types encrypted with AWS KMS.
+3. **No Inbound Network Ports:** The EC2 instance security group allows **outbound traffic only**. Management and shell access are handled entirely through encrypted AWS Systems Manager (SSM) agent sessions without opening SSH port 22.
+4. **Permanent Cash Reserve:** Neither bot can touch the £2.00 cash buffer, preventing order rejections from fee depletion.
