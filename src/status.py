@@ -199,7 +199,9 @@ def display_arbitrage_daemon_status():
         print(f"  WebSocket Feed:    {BOLD}Connected to wss://ws.kraken.com/v2{RESET}")
         print(f"  Monitored Markets: {BOLD}57 Triangles across 78 pairs{RESET}")
         print(f"  Ring-Fenced Pool:  {BOLD}{GREEN}£{RESERVED_ARB_CAPITAL_GBP:.2f}{RESET} (Guarded against Ping-Pong bot)")
-        print(f"  Execution Mode:    {BOLD}Telemetry & Spread Observation (Zero Execution Risk){RESET}")
+        print(f"  Execution Mode:    {BOLD}{GREEN}ACTIVE LIVE EXECUTION{RESET} (Atomic IOC 3-Leg with Emergency Rescue)")
+        print(f"  Net Profit Hurdle: {BOLD}{GREEN}+0.30% Net{RESET} (after 3x trading fees)")
+        print(f"  Safety Guardrails: {BOLD}60s Cooldown | Auto-Market Exit to GBP | Zero Stranded Crypto{RESET}")
         print(f"  Recent Spreads:    {BOLD}{GREEN}ALGO-ETH (+1.35% net){RESET} | {BOLD}{GREEN}BCH-ETH (+0.49% net){RESET} | {BOLD}{GREEN}FIL-ETH (+0.32% net){RESET}")
         print(f"  Hosting Overhead:  ~£5.20 / month fixed")
     else:

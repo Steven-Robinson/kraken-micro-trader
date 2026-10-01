@@ -42,6 +42,8 @@ class KrakenClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.dry_run = dry_run
+        self._pair_info_cache: dict[str, dict[str, Any]] = {}
+        self._dry_run_orders: dict[str, dict[str, Any]] = {}
 
     # --- Authentication Helper ---
 
@@ -140,16 +142,24 @@ class KrakenClient:
 
     def get_pair_info(self, pair: str) -> dict[str, Any]:
         """Fetch precision, lot size, and minimum order rules for a pair."""
+        if pair in self._pair_info_cache:
+            return self._pair_info_cache[pair]
+
         result = self._request("/0/public/AssetPairs", data={"pair": pair})
         first_key = next(iter(result))
         pair_data = result[first_key]
 
-        return {
+        info = {
             "altname": pair_data.get("altname", pair),
             "pair_decimals": pair_data.get("pair_decimals", 2),
             "lot_decimals": pair_data.get("lot_decimals", 4),
             "ordermin": Decimal(pair_data.get("ordermin", "0.01")),
         }
+        self._pair_info_cache[pair] = info
+        # Also cache under altname if different
+        if info["altname"] != pair:
+            self._pair_info_cache[info["altname"]] = info
+        return info
 
     def get_ohlc(self, pair: str, interval: int = 60) -> list[list[Any]]:
         """Fetch historical candlestick data (default interval: 60 minutes).
@@ -180,50 +190,62 @@ class KrakenClient:
         result = self._request("/0/private/TradeBalance", data={"asset": asset}, is_private=True)
         return {k: Decimal(str(v)) for k, v in result.items()}
 
-    def place_limit_order(
+    def place_order(
         self,
         pair: str,
         side: str,  # "buy" or "sell"
-        volume: Decimal,
-        price: Decimal,
-        post_only: bool = True,
+        ordertype: str = "limit",  # "limit" or "market"
+        volume: Decimal = Decimal("0"),
+        price: Decimal | None = None,
+        post_only: bool = False,
+        time_in_force: str | None = None,  # e.g. "IOC", "GTC"
     ) -> str:
-        """Place a limit buy or sell order.
-
-        Args:
-            pair: Trading pair (e.g. 'SOLGBP')
-            side: 'buy' or 'sell'
-            volume: Amount of crypto to buy/sell
-            price: Limit price
-            post_only: If True, guarantees Maker status (rejects if it would
-              cross as Taker)
-
-        Returns:
-            Transaction ID (txid) string.
-        """
+        """Place an order with customizable type, flags, and time-in-force."""
         if self.dry_run:
-            mock_txid = f"DRYRUN-{side.upper()}-{int(time.time())}"
+            mock_txid = f"DRYRUN-{side.upper()}-{int(time.time() * 1000)}"
             logger.info(
-                "[DRY RUN] Placed limit %s: %s %s @ £%s (txid: %s)",
+                "[DRY RUN] Placed %s %s: %s %s @ %s (TIF: %s, post_only: %s) -> %s",
+                ordertype,
                 side,
                 volume,
                 pair,
-                price,
+                price if price is not None else "MARKET",
+                time_in_force,
+                post_only,
                 mock_txid,
             )
+            # Store in dry-run cache for query_order
+            fill_price = price if price is not None else Decimal("1.0")
+            fill_cost = (volume * fill_price).quantize(Decimal("0.0001"))
+            fee_rate = Decimal("0.0025") if post_only else Decimal("0.0040")
+            self._dry_run_orders[mock_txid] = {
+                "status": "closed",
+                "vol_exec": volume,
+                "cost": fill_cost,
+                "price": fill_price,
+                "fee": (fill_cost * fee_rate).quantize(Decimal("0.0001")),
+                "pair": pair,
+                "side": side,
+            }
             return mock_txid
 
         data: dict[str, Any] = {
             "pair": pair,
             "type": side,
-            "ordertype": "limit",
-            "price": str(price),
+            "ordertype": ordertype,
             "volume": str(volume),
         }
+        if ordertype == "limit" and price is not None:
+            data["price"] = str(price)
 
-        # 'post' flag guarantees Maker status, avoiding higher taker fees
+        oflags = []
         if post_only:
-            data["oflags"] = "post"
+            oflags.append("post")
+        if oflags:
+            data["oflags"] = ",".join(oflags)
+
+        if time_in_force:
+            data["timeinforce"] = time_in_force
 
         result = self._request("/0/private/AddOrder", data=data, is_private=True)
         txids = result.get("txid", [])
@@ -232,20 +254,38 @@ class KrakenClient:
 
         return txids[0]
 
+    def place_limit_order(
+        self,
+        pair: str,
+        side: str,  # "buy" or "sell"
+        volume: Decimal,
+        price: Decimal,
+        post_only: bool = True,
+    ) -> str:
+        """Place a limit buy or sell order (Maker post-only by default)."""
+        return self.place_order(
+            pair=pair,
+            side=side,
+            ordertype="limit",
+            volume=volume,
+            price=price,
+            post_only=post_only,
+        )
+
     def query_order(self, txid: str) -> dict[str, Any]:
         """Query status of an order.
 
-        Returns dict containing 'status' ('open', 'closed', 'canceled',
-        'expired'),
-        'vol_exec' (Decimal executed volume), and 'cost' (Decimal total cost).
+        Returns dict containing 'status', 'vol_exec', 'cost', 'price', 'fee'.
         """
         if self.dry_run and txid.startswith("DRYRUN-"):
-            # In dry-run, fallback to state-stored order prices for realistic simulation math
+            if txid in self._dry_run_orders:
+                return self._dry_run_orders[txid]
             return {
                 "status": "closed",
                 "vol_exec": Decimal("0"),
                 "cost": Decimal("0"),
                 "price": Decimal("0"),
+                "fee": Decimal("0"),
                 "reason": "Dry run mock fill",
             }
 
@@ -255,15 +295,17 @@ class KrakenClient:
 
         order_data = result.get(txid, {})
         status = order_data.get("status", "unknown")
-        vol_exec = Decimal(order_data.get("vol_exec", "0"))
-        cost = Decimal(order_data.get("cost", "0"))
-        avg_price = Decimal(order_data.get("price", "0"))
+        vol_exec = Decimal(str(order_data.get("vol_exec", "0")))
+        cost = Decimal(str(order_data.get("cost", "0")))
+        avg_price = Decimal(str(order_data.get("price", "0")))
+        fee = Decimal(str(order_data.get("fee", "0")))
 
         return {
             "status": status,
             "vol_exec": vol_exec,
             "cost": cost,
             "price": avg_price,
+            "fee": fee,
             "raw": order_data,
         }
 

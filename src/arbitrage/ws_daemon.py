@@ -22,8 +22,10 @@ import websockets
 # Ensure src/ is on python path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from arbitrage.routes import TriangleRoute, PRIORITY_ASSETS
+from arbitrage.routes import TriangleRoute, PairInfo, PRIORITY_ASSETS
 from arbitrage.capital import calculate_trade_capital
+from arbitrage.scanner import ArbitrageOpportunity
+from arbitrage.executor import ArbitrageExecutor
 from kraken_client import KrakenClient
 
 try:
@@ -39,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger("kraken-arb-daemon")
 
 WS_URL = "wss://ws.kraken.com/v2"
-DEFAULT_MIN_PROFIT_PCT = Decimal("0.20")  # Minimum +0.20% net profit after fees
+DEFAULT_MIN_PROFIT_PCT = Decimal("0.30")  # Minimum +0.30% net profit after fees
 MAKER_FEE = Decimal("0.0025")
 TAKER_FEE = Decimal("0.0040")
 
@@ -72,6 +74,7 @@ class WebSocketArbDaemon:
         trade_capital: Decimal = Decimal("30.00"),
         dry_run: bool = True,
         min_net_pct: Decimal = DEFAULT_MIN_PROFIT_PCT,
+        execution_mode: str = "TAKER",
     ):
         if not api_key or not api_secret:
             from config import get_kraken_credentials
@@ -87,19 +90,27 @@ class WebSocketArbDaemon:
         self.trade_capital = trade_capital
         self.dry_run = dry_run
         self.min_net_pct = min_net_pct
+        self.execution_mode = execution_mode.upper()
 
         self.client = KrakenClient(api_key=self.api_key, api_secret=self.api_secret, dry_run=dry_run)
+        self.executor = ArbitrageExecutor(
+            client=self.client,
+            dry_run=dry_run,
+            min_net_pct=min_net_pct,
+        )
+
         self.routes: list[TriangleRoute] = []
+        self.pair_details: dict[str, PairInfo] = {}
         self.symbol_to_wsname: dict[str, str] = {}
         self.wsname_to_symbol: dict[str, str] = {}
-        
+
         # Real-time best bid/ask cache: wsname -> {'bid': Decimal, 'ask': Decimal, 'timestamp': float}
         self.book_cache: dict[str, dict[str, Decimal]] = {}
         self.running = False
 
         # Alert throttling (prevent flooding email)
         self.last_alert_time: float = 0.0
-        self.alert_cooldown_seconds: float = 900.0  # At most 1 alert every 15 mins for opportunities
+        self.alert_cooldown_seconds: float = 900.0  # At most 1 alert every 15 mins for observation opportunities
 
     def _maybe_alert(
         self,
@@ -119,23 +130,39 @@ class WebSocketArbDaemon:
                 message=(
                     f"⚡ Kraken Real-Time Triangular Arbitrage Opportunity!\n\n"
                     f"Route: {route.id} ({direction})\n"
-                    f"Net Spread: {net_pct:+.3f}% (after 3x maker fees)\n"
+                    f"Net Spread: {net_pct:+.3f}% (after fees)\n"
                     f"Projected Net Profit: +£{profit} on £{self.trade_capital}\n"
                     f"Prices: Leg1: £{p1}, Cross: {pc}, Leg3: £{p3}\n"
-                    f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}\n"
+                    f"Execution Mode: {'DRY RUN' if self.dry_run else 'LIVE'} ({self.execution_mode})\n"
                     f"Hosting: AWS EC2 (t4g.nano Dublin eu-west-1)\n"
                 ),
             )
 
     def initialize_routes(self) -> list[str]:
-        """Fetch pairs, map triangles, and return symbols formatted for WS v2."""
+        """Fetch pairs, map triangles, cache PairInfo, and return symbols for WS v2."""
         raw_pairs = self.client._request("/0/public/AssetPairs")
         gbp_assets: dict[str, str] = {}
 
+        # 1. Map GBP assets and pair details
         for pair_name, info in raw_pairs.items():
             if info.get("status") != "online":
                 continue
             wsname = info.get("wsname", "")
+            altname = info.get("altname", pair_name)
+            p_info = PairInfo(
+                pair_id=pair_name,
+                wsname=wsname,
+                base=info.get("base", wsname.split("/")[0] if "/" in wsname else ""),
+                quote=info.get("quote", "GBP"),
+                ordermin=Decimal(str(info.get("ordermin", "0.01"))),
+                pair_decimals=int(info.get("pair_decimals", 2)),
+                lot_decimals=int(info.get("lot_decimals", 8)),
+                altname=altname,
+            )
+            self.pair_details[wsname] = p_info
+            self.pair_details[altname] = p_info
+            self.pair_details[pair_name] = p_info
+
             if wsname.endswith("/GBP"):
                 base = wsname.split("/")[0]
                 gbp_assets[base] = wsname
@@ -143,6 +170,7 @@ class WebSocketArbDaemon:
         needed_symbols = set()
         routes = []
 
+        # 2. Map cross pairs and form viable triangular routes
         for pair_name, info in raw_pairs.items():
             if info.get("status") != "online":
                 continue
@@ -170,7 +198,12 @@ class WebSocketArbDaemon:
 
         self.routes = routes
         symbols_list = sorted(list(needed_symbols))
-        logger.info("Mapped %d priority triangles across %d WebSocket symbols.", len(routes), len(symbols_list))
+        logger.info(
+            "Mapped %d priority triangles across %d WebSocket symbols (Metadata cached for %d pairs).",
+            len(routes),
+            len(symbols_list),
+            len(self.pair_details),
+        )
         return symbols_list
 
     def handle_ticker_update(self, data_list: list[dict[str, Any]]) -> None:
@@ -198,7 +231,7 @@ class WebSocketArbDaemon:
                 self.evaluate_route(route)
 
     def evaluate_route(self, route: TriangleRoute) -> None:
-        """Microsecond evaluation of forward and reverse cycles."""
+        """Microsecond evaluation of forward and reverse cycles with live execution."""
         t1 = self.book_cache.get(route.leg1_pair)
         tc = self.book_cache.get(route.cross_pair)
         t3 = self.book_cache.get(route.leg3_pair)
@@ -214,33 +247,132 @@ class WebSocketArbDaemon:
         if p1_ask <= 0 or pc_ask <= 0 or p3_ask <= 0:
             return
 
-        fee_factor = (Decimal("1") - MAKER_FEE) ** 3  # Maker hurdle (0.75%)
+        fee_factor_taker = (Decimal("1") - TAKER_FEE) ** 3
+        fee_factor_maker = (Decimal("1") - MAKER_FEE) ** 3
+        now_ts = int(time.time())
 
-        # 1. Forward Cycle: GBP -> A -> B -> GBP (Maker quotes)
-        fwd_gross = (Decimal("1") / p1_bid) * pc_ask * p3_ask
-        fwd_net = fwd_gross * fee_factor
-        fwd_net_pct = (fwd_net - Decimal("1")) * Decimal("100")
+        # ---------------------------------------------------------------------
+        # 1. TAKER EVALUATION (Crossing the spread, immediate fill or cancel)
+        # ---------------------------------------------------------------------
+        # Forward Taker: Buy A at ask, Sell A for B at bid, Sell B for GBP at bid
+        fwd_taker_gross = (Decimal("1") / p1_ask) * pc_bid * p3_bid
+        fwd_taker_net = fwd_taker_gross * fee_factor_taker
+        fwd_taker_net_pct = (fwd_taker_net - Decimal("1")) * Decimal("100")
 
-        if fwd_net_pct >= self.min_net_pct:
-            profit = (self.trade_capital * (fwd_net - Decimal("1"))).quantize(Decimal("0.0001"))
+        if fwd_taker_net_pct >= self.min_net_pct:
+            profit = (self.trade_capital * (fwd_taker_net - Decimal("1"))).quantize(Decimal("0.0001"))
             logger.info(
-                "⚡ [OPPORTUNITY DETECTED] FORWARD %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg1: £%s, Cross: %s, Leg3: £%s",
-                route.asset_a, route.asset_b, fwd_net_pct, profit, self.trade_capital, p1_bid, pc_ask, p3_ask
+                "🚀 [TAKER DISLOCATION] FORWARD %s | Net: %+.3f%% (+£%s on £%s) | Leg1: £%s, Cross: %s, Leg3: £%s",
+                route.id, fwd_taker_net_pct, profit, self.trade_capital, p1_ask, pc_bid, p3_bid
             )
-            self._maybe_alert("FORWARD", route, fwd_net_pct, profit, p1_bid, pc_ask, p3_ask)
+            opp = ArbitrageOpportunity(
+                route=route,
+                direction="FORWARD",
+                execution_type="TAKER",
+                gross_multiplier=fwd_taker_gross,
+                gross_profit_pct=(fwd_taker_gross - 1) * 100,
+                net_multiplier=fwd_taker_net,
+                net_profit_pct=fwd_taker_net_pct,
+                expected_profit_gbp=profit,
+                leg1_price=p1_ask,
+                cross_price=pc_bid,
+                leg3_price=p3_bid,
+                timestamp=now_ts,
+            )
+            self.executor.execute_cycle(opp, self.trade_capital, pair_map=self.pair_details)
+            return
 
-        # 2. Reverse Cycle: GBP -> B -> A -> GBP (Maker quotes)
-        rev_gross = (Decimal("1") / p3_bid) * (Decimal("1") / pc_bid) * p1_ask
-        rev_net = rev_gross * fee_factor
-        rev_net_pct = (rev_net - Decimal("1")) * Decimal("100")
+        # Reverse Taker: Buy B at ask, Buy A with B at ask, Sell A for GBP at bid
+        rev_taker_gross = (Decimal("1") / p3_ask) * (Decimal("1") / pc_ask) * p1_bid
+        rev_taker_net = rev_taker_gross * fee_factor_taker
+        rev_taker_net_pct = (rev_taker_net - Decimal("1")) * Decimal("100")
 
-        if rev_net_pct >= self.min_net_pct:
-            profit = (self.trade_capital * (rev_net - Decimal("1"))).quantize(Decimal("0.0001"))
+        if rev_taker_net_pct >= self.min_net_pct:
+            profit = (self.trade_capital * (rev_taker_net - Decimal("1"))).quantize(Decimal("0.0001"))
             logger.info(
-                "⚡ [OPPORTUNITY DETECTED] REVERSE %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg3: £%s, Cross: %s, Leg1: £%s",
-                route.asset_a, route.asset_b, rev_net_pct, profit, self.trade_capital, p3_bid, pc_bid, p1_ask
+                "🚀 [TAKER DISLOCATION] REVERSE %s | Net: %+.3f%% (+£%s on £%s) | Leg3: £%s, Cross: %s, Leg1: £%s",
+                route.id, rev_taker_net_pct, profit, self.trade_capital, p3_ask, pc_ask, p1_bid
             )
-            self._maybe_alert("REVERSE", route, rev_net_pct, profit, p3_bid, pc_bid, p1_ask)
+            opp = ArbitrageOpportunity(
+                route=route,
+                direction="REVERSE",
+                execution_type="TAKER",
+                gross_multiplier=rev_taker_gross,
+                gross_profit_pct=(rev_taker_gross - 1) * 100,
+                net_multiplier=rev_taker_net,
+                net_profit_pct=rev_taker_net_pct,
+                expected_profit_gbp=profit,
+                leg1_price=p1_bid,
+                cross_price=pc_ask,
+                leg3_price=p3_ask,
+                timestamp=now_ts,
+            )
+            self.executor.execute_cycle(opp, self.trade_capital, pair_map=self.pair_details)
+            return
+
+        # ---------------------------------------------------------------------
+        # 2. MAKER SPREAD OBSERVATION & EXECUTION
+        # ---------------------------------------------------------------------
+        # Forward Maker: Buy A at bid, Sell A for B at ask, Sell B for GBP at ask
+        fwd_maker_gross = (Decimal("1") / p1_bid) * pc_ask * p3_ask
+        fwd_maker_net = fwd_maker_gross * fee_factor_maker
+        fwd_maker_net_pct = (fwd_maker_net - Decimal("1")) * Decimal("100")
+
+        if fwd_maker_net_pct >= self.min_net_pct:
+            profit = (self.trade_capital * (fwd_maker_net - Decimal("1"))).quantize(Decimal("0.0001"))
+            logger.info(
+                "⚡ [MAKER SPREAD] FORWARD %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg1: £%s, Cross: %s, Leg3: £%s",
+                route.asset_a, route.asset_b, fwd_maker_net_pct, profit, self.trade_capital, p1_bid, pc_ask, p3_ask
+            )
+            self._maybe_alert("FORWARD", route, fwd_maker_net_pct, profit, p1_bid, pc_ask, p3_ask)
+
+            if self.execution_mode == "MAKER":
+                opp = ArbitrageOpportunity(
+                    route=route,
+                    direction="FORWARD",
+                    execution_type="MAKER",
+                    gross_multiplier=fwd_maker_gross,
+                    gross_profit_pct=(fwd_maker_gross - 1) * 100,
+                    net_multiplier=fwd_maker_net,
+                    net_profit_pct=fwd_maker_net_pct,
+                    expected_profit_gbp=profit,
+                    leg1_price=p1_bid,
+                    cross_price=pc_ask,
+                    leg3_price=p3_ask,
+                    timestamp=now_ts,
+                )
+                self.executor.execute_cycle(opp, self.trade_capital, pair_map=self.pair_details)
+                return
+
+        # Reverse Maker: Buy B at bid, Buy A with B at bid, Sell A for GBP at ask
+        rev_maker_gross = (Decimal("1") / p3_bid) * (Decimal("1") / pc_bid) * p1_ask
+        rev_maker_net = rev_maker_gross * fee_factor_maker
+        rev_maker_net_pct = (rev_maker_net - Decimal("1")) * Decimal("100")
+
+        if rev_maker_net_pct >= self.min_net_pct:
+            profit = (self.trade_capital * (rev_maker_net - Decimal("1"))).quantize(Decimal("0.0001"))
+            logger.info(
+                "⚡ [MAKER SPREAD] REVERSE %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg3: £%s, Cross: %s, Leg1: £%s",
+                route.asset_a, route.asset_b, rev_maker_net_pct, profit, self.trade_capital, p3_bid, pc_bid, p1_ask
+            )
+            self._maybe_alert("REVERSE", route, rev_maker_net_pct, profit, p3_bid, pc_bid, p1_ask)
+
+            if self.execution_mode == "MAKER":
+                opp = ArbitrageOpportunity(
+                    route=route,
+                    direction="REVERSE",
+                    execution_type="MAKER",
+                    gross_multiplier=rev_maker_gross,
+                    gross_profit_pct=(rev_maker_gross - 1) * 100,
+                    net_multiplier=rev_maker_net,
+                    net_profit_pct=rev_maker_net_pct,
+                    expected_profit_gbp=profit,
+                    leg1_price=p1_ask,
+                    cross_price=pc_bid,
+                    leg3_price=p3_bid,
+                    timestamp=now_ts,
+                )
+                self.executor.execute_cycle(opp, self.trade_capital, pair_map=self.pair_details)
 
     async def run(self) -> None:
         """Main WebSocket async event loop with auto-reconnect."""
@@ -255,7 +387,7 @@ class WebSocketArbDaemon:
                 f"Subscribed Symbols: {len(symbols)} pairs across priority markets\n"
                 f"Allocated Trade Capital: £{self.trade_capital}\n"
                 f"Min Net Hurdle: +{self.min_net_pct}%\n"
-                f"Execution Mode: {'DRY RUN' if self.dry_run else 'LIVE'}\n"
+                f"Execution Mode: {'DRY RUN' if self.dry_run else 'LIVE'} ({self.execution_mode})\n"
                 f"Latency: Direct connection to Kraken matching engines (<15ms in Dublin)."
             ),
         )
@@ -294,8 +426,19 @@ class WebSocketArbDaemon:
 def main():
     dry_run = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
     capital = Decimal(os.getenv("ARB_CAPITAL_GBP", "30.00"))
-    logger.info("Initializing WebSocket Arb Daemon (DRY_RUN=%s, Trade Capital=£%s)", dry_run, capital)
-    daemon = WebSocketArbDaemon(trade_capital=capital, dry_run=dry_run)
+    min_net = Decimal(os.getenv("ARB_MIN_NET_PCT", "0.30"))
+    exec_mode = os.getenv("ARB_EXECUTION_MODE", "TAKER")
+
+    logger.info(
+        "Initializing WebSocket Arb Daemon (DRY_RUN=%s, Trade Capital=£%s, Min Net Hurdle=+%s%%, Mode=%s)",
+        dry_run, capital, min_net, exec_mode
+    )
+    daemon = WebSocketArbDaemon(
+        trade_capital=capital,
+        dry_run=dry_run,
+        min_net_pct=min_net,
+        execution_mode=exec_mode,
+    )
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -319,4 +462,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

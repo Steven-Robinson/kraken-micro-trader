@@ -1,4 +1,4 @@
-"""Triangular arbitrage route definitions and pair topology for Kraken."""
+from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
@@ -14,6 +14,7 @@ class PairInfo:
     ordermin: Decimal     # minimum order volume
     pair_decimals: int    # price decimals
     lot_decimals: int     # volume decimals
+    altname: str = ""     # e.g. "SOLGBP", "ETHGBP"
 
 
 @dataclass(frozen=True)
