@@ -16,6 +16,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import TRADING_PAIRS, DYNAMODB_TABLE, AWS_REGION, RESERVED_ARB_CAPITAL_GBP
 
 
+def _deser_dynamo(item: dict) -> dict:
+    out = {}
+    for k, v in item.items():
+        if "S" in v:
+            out[k] = v["S"]
+        elif "N" in v:
+            out[k] = int(v["N"]) if "." not in v["N"] else Decimal(v["N"])
+        elif "M" in v:
+            out[k] = _deser_dynamo(v["M"])
+        elif "BOOL" in v:
+            out[k] = v["BOOL"]
+    return out
+
+
 def get_live_dynamo_state(bot_id: str):
     """Fetch DynamoDB state for a specific bot_id using AWS CLI."""
     try:
@@ -31,15 +45,11 @@ def get_live_dynamo_state(bot_id: str):
         item = data.get("Item", {})
         if not item:
             return None
-        return {
-            "state": item.get("state", {}).get("S", "IDLE"),
-            "active_order_id": item.get("active_order_id", {}).get("S"),
-            "last_buy_price": item.get("last_buy_price", {}).get("S", "0.0"),
-            "last_buy_volume": item.get("last_buy_volume", {}).get("S", "0.0"),
-            "target_sell_price": item.get("target_sell_price", {}).get("S", "0.0"),
-            "trades_completed": int(item.get("trades_completed", {}).get("N", 0)),
-            "total_realized_profit_gbp": item.get("total_realized_profit_gbp", {}).get("S", "0.0"),
-        }
+        parsed = _deser_dynamo(item)
+        parsed.setdefault("state", "IDLE")
+        parsed.setdefault("trades_completed", 0)
+        parsed.setdefault("total_realized_profit_gbp", "0.0")
+        return parsed
     except Exception:
         return None
 
@@ -138,26 +148,56 @@ def display_pair_status(pair: str):
     print(f"\n{BOLD}{CYAN}------------------------------------------------------------{RESET}")
     print(f"  Trading Pair:      {BOLD}{pair}{RESET} ({bot_id})")
 
-    state_color = GREEN if "PLACED" in current_state else YELLOW
-    print(f"  Current State:     {BOLD}{state_color}{current_state}{RESET}")
+    if state.get("version") == "grid_v2":
+        print(f"  Strategy Mode:     {BOLD}{CYAN}2-RUNG MICRO-GRID (Compounding Intraday Dips){RESET}")
+        rungs = state.get("rungs", {})
+        for rid in ("1", "2"):
+            rdata = rungs.get(rid, {})
+            r_state = rdata.get("state", "IDLE")
+            r_color = GREEN if "PLACED" in r_state else YELLOW
+            r_order = rdata.get("active_order_id") or "None"
+            r_buy = rdata.get("last_buy_price", "0.0")
+            r_vol = rdata.get("last_buy_volume", "0.0")
+            r_target = rdata.get("target_sell_price", "0.0")
+            r_disc = rdata.get("discount_pct", "0.0")
+            r_gain = rdata.get("target_pct", "0.0")
 
-    if current_state == "SELL_PLACED":
-        entry = Decimal(last_buy)
-        target = Decimal(target_sell)
-        vol = Decimal(last_vol)
-        gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
-        net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
-        print(f"  Cycle Progress:    {BOLD}Phase 2/2 (Holding {pair[:3]}, Limit Sell Active){RESET}")
-        print(f"  Active Sell Order: {active_order}")
-        print(f"  Entry Buy Price:   £{last_buy} ({last_vol} {pair[:3]})")
-        print(f"  Target Sell Price: £{target_sell}")
-        print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
-    elif current_state == "BUY_PLACED":
-        print(f"  Cycle Progress:    {BOLD}Phase 1/2 (Holding Cash, Limit Buy Active){RESET}")
-        print(f"  Active Buy Order:  {active_order}")
-        print(f"  Target Buy Price:  £{last_buy} ({last_vol} {pair[:3]})")
+            if r_state == "SELL_PLACED":
+                entry = Decimal(r_buy)
+                target = Decimal(r_target)
+                vol = Decimal(r_vol)
+                gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
+                net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
+                print(f"  • Rung {rid} (50%):     {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{r_buy})")
+                print(f"    Target Sell:     £{r_target} | Pending Profit: {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET}")
+                print(f"    Active Order:    {r_order}")
+            elif r_state == "BUY_PLACED":
+                print(f"  • Rung {rid} (50%):     {BOLD}{r_color}BUY_PLACED{RESET} @ £{r_buy} (-{r_disc}% dip) | Target: +{r_gain}%")
+                print(f"    Active Order:    {r_order}")
+            else:
+                print(f"  • Rung {rid} (50%):     {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
     else:
-        print(f"  Active Order ID:   {active_order}")
+        state_color = GREEN if "PLACED" in current_state else YELLOW
+        print(f"  Strategy Mode:     {BOLD}LEGACY SINGLE-ORDER{RESET} (Auto-migrates to Grid upon Sell Fill)")
+        print(f"  Current State:     {BOLD}{state_color}{current_state}{RESET}")
+
+        if current_state == "SELL_PLACED":
+            entry = Decimal(last_buy)
+            target = Decimal(target_sell)
+            vol = Decimal(last_vol)
+            gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
+            net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
+            print(f"  Cycle Progress:    {BOLD}Phase 2/2 (Holding {pair[:3]}, Limit Sell Active){RESET}")
+            print(f"  Active Sell Order: {active_order}")
+            print(f"  Entry Buy Price:   £{last_buy} ({last_vol} {pair[:3]})")
+            print(f"  Target Sell Price: £{target_sell}")
+            print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
+        elif current_state == "BUY_PLACED":
+            print(f"  Cycle Progress:    {BOLD}Phase 1/2 (Holding Cash, Limit Buy Active){RESET}")
+            print(f"  Active Buy Order:  {active_order}")
+            print(f"  Target Buy Price:  £{last_buy} ({last_vol} {pair[:3]})")
+        else:
+            print(f"  Active Order ID:   {active_order}")
 
     print(f"  Completed Cycles:  {BOLD}{trades}{RESET}")
     profit_color = GREEN if profit >= 0 else "\033[91m"

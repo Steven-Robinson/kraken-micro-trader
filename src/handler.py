@@ -30,6 +30,7 @@ from config import (
     get_kraken_credentials,
 )
 from kraken_client import KrakenClient
+from grid_engine import initialize_grid_state, process_grid_pair
 from state_store import StateStore
 from volatility import compute_volatility_target
 
@@ -269,7 +270,28 @@ def process_pair(
     lot_decimals = pair_info["lot_decimals"]
     ordermin = pair_info["ordermin"]
 
-    # State Machine Router
+    # 1. Grid Engine Mode (v2)
+    if state.get("version") == "grid_v2":
+        return process_grid_pair(
+            pair, client, store, state, pair_decimals, lot_decimals, ordermin, capital, send_alert
+        )
+
+    # 2. Seamless Migration for ETHGBP: cancel old single buy order and activate 2-Rung Micro-Grid immediately
+    if pair == "ETHGBP" and state.get("state") in ("IDLE", "BUY_PLACED"):
+        old_txid = state.get("active_order_id")
+        if old_txid and not client.dry_run:
+            try:
+                client.cancel_order(old_txid)
+                logger.info("[%s] Cancelled legacy single buy order %s to activate 2-Rung Micro-Grid.", pair, old_txid)
+            except Exception as e:
+                logger.warning("[%s] Could not cancel legacy buy order %s: %s", pair, old_txid, e)
+        state = initialize_grid_state(pair)
+        store.save_state(state)
+        return process_grid_pair(
+            pair, client, store, state, pair_decimals, lot_decimals, ordermin, capital, send_alert
+        )
+
+    # 3. Legacy State Machine Router (for active SOL and BTC sell orders)
     if current_state == "IDLE":
         _handle_idle(client, store, state, pair, pair_decimals, lot_decimals, ordermin, capital)
     elif current_state == "BUY_PLACED":
@@ -496,32 +518,12 @@ def _handle_sell_placed(
         except Exception:
             pass
 
-        # Calculate re-entry buy price based on the target percentage just realized
-        applied_target = Decimal(state.get("applied_profit_target_percent", str(PROFIT_TARGET_PERCENT)))
-        reentry_discount = Decimal("1") - (applied_target / Decimal("100"))
-        raw_reentry_price = sell_price * reentry_discount
-        reentry_price = _round_decimal(raw_reentry_price, pair_decimals, rounding=ROUND_HALF_UP)
-
-        # Strictly protect permanent fee buffer on re-entry buy
-        balances = client.get_balance()
-        free_cash = balances.get("ZGBP", balances.get("GBP", Decimal("0")))
-        tradeable_cash = max(Decimal("0"), free_cash - MIN_FEE_BUFFER_GBP)
-        effective_capital = min(capital, tradeable_cash)
-
-        raw_volume = effective_capital / reentry_price
-        reentry_volume = _round_decimal(raw_volume, lot_decimals, rounding=ROUND_DOWN)
-
-        logger.info("[%s] Submitting new Limit Buy for next cycle: %s %s @ £%s (Capital: £%s, Fee Buffer Kept: £%s)", pair, reentry_volume, pair, reentry_price, effective_capital, MIN_FEE_BUFFER_GBP)
-        buy_txid = client.place_limit_order(pair, "buy", reentry_volume, reentry_price, post_only=True)
-
-        state["state"] = "BUY_PLACED"
-        state["active_order_id"] = buy_txid
-        state["last_buy_price"] = str(reentry_price)
-        state["last_buy_volume"] = str(reentry_volume)
-        state["trades_completed"] = total_trades
-        state["total_realized_profit_gbp"] = str(total_profit)
-        state["order_placed_at"] = int(time.time())
-        store.save_state(state)
+        # Upgrade pair to 2-Rung Micro-Grid for subsequent cycles!
+        logger.info("[%s] Upgrading pair to 2-Rung Micro-Grid v2 after profitable cycle completion.", pair)
+        grid_state = initialize_grid_state(pair)
+        grid_state["trades_completed"] = total_trades
+        grid_state["total_realized_profit_gbp"] = str(total_profit)
+        store.save_state(grid_state)
 
         send_alert(
             f"[Kraken Micro-Trader] Profit Locked In on {pair}! (+£{net_profit:.2f})",
@@ -531,8 +533,7 @@ def _handle_sell_placed(
             f"• Entry Price: £{buy_price}\n"
             f"• Net Profit (After Fees): +£{net_profit:.4f}\n"
             f"• Total Realized Profit to Date: £{total_profit:.4f} across {total_trades} trade(s)\n\n"
-            f"Next Action: Queued re-entry Limit Buy order at £{reentry_price} for {reentry_volume} {pair}.\n"
-            f"Active Order ID: {buy_txid}",
+            f"Next Action: Pair successfully upgraded to 2-Rung Micro-Grid! Staggered buy rungs will deploy on next iteration.",
         )
 
     elif status == "open":
