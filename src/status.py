@@ -72,7 +72,7 @@ def get_ec2_arb_info():
     try:
         cmd = [
             "aws", "ec2", "describe-instances",
-            "--filters", "Name=tag:Name,Values=kraken-arb-daemon", "Name=instance-state-name,Values=running,pending",
+            "--filters", "Name=tag:Name,Values=kraken-arb-daemon", "Name=instance-state-name,Values=running,pending,stopping,stopped",
             "--region", AWS_REGION,
             "--output", "json"
         ]
@@ -87,17 +87,18 @@ def get_ec2_arb_info():
         az = inst["Placement"]["AvailabilityZone"]
         itype = inst["InstanceType"]
 
-        # Check SSM ping
-        ssm_cmd = [
-            "aws", "ssm", "describe-instance-information",
-            "--filters", f"Key=InstanceIds,Values={inst_id}",
-            "--region", AWS_REGION,
-            "--output", "json"
-        ]
-        ssm_res = subprocess.run(ssm_cmd, capture_output=True, text=True, check=True)
-        ssm_data = json.loads(ssm_res.stdout)
-        info_list = ssm_data.get("InstanceInformationList", [])
-        ping = info_list[0].get("PingStatus", "Unknown") if info_list else "Not registered"
+        ping = "N/A"
+        if state == "running":
+            ssm_cmd = [
+                "aws", "ssm", "describe-instance-information",
+                "--filters", f"Key=InstanceIds,Values={inst_id}",
+                "--region", AWS_REGION,
+                "--output", "json"
+            ]
+            ssm_res = subprocess.run(ssm_cmd, capture_output=True, text=True, check=True)
+            ssm_data = json.loads(ssm_res.stdout)
+            info_list = ssm_data.get("InstanceInformationList", [])
+            ping = info_list[0].get("PingStatus", "Unknown") if info_list else "Not registered"
 
         return {
             "instance_id": inst_id,
@@ -191,19 +192,26 @@ def display_arbitrage_daemon_status():
 
     info = get_ec2_arb_info()
     if info:
-        state_color = GREEN if info["state"] == "running" else YELLOW
-        ping_color = GREEN if info["ping"] == "Online" else YELLOW
-        print(f"  Engine State:      {BOLD}{state_color}{info['state'].upper()}{RESET} ({BOLD}{ping_color}{info['ping']} in SSM{RESET})")
-        print(f"  EC2 Instance:      {BOLD}{info['instance_id']}{RESET} ({info['itype']} in {info['az']})")
-        print(f"  Network Latency:   {BOLD}{GREEN}<15ms{RESET} (Colocated in Dublin with Kraken matching engines)")
-        print(f"  WebSocket Feed:    {BOLD}Connected to wss://ws.kraken.com/v2{RESET}")
-        print(f"  Monitored Markets: {BOLD}57 Triangles across 78 pairs{RESET}")
-        print(f"  Ring-Fenced Pool:  {BOLD}{GREEN}£{RESERVED_ARB_CAPITAL_GBP:.2f}{RESET} (Guarded against Ping-Pong bot)")
-        print(f"  Execution Mode:    {BOLD}{GREEN}ACTIVE LIVE EXECUTION{RESET} (Atomic IOC 3-Leg with Emergency Rescue)")
-        print(f"  Net Profit Hurdle: {BOLD}{GREEN}+0.30% Net{RESET} (after 3x trading fees)")
-        print(f"  Safety Guardrails: {BOLD}60s Cooldown | Auto-Market Exit to GBP | Zero Stranded Crypto{RESET}")
-        print(f"  Recent Spreads:    {BOLD}{GREEN}ALGO-ETH (+1.35% net){RESET} | {BOLD}{GREEN}BCH-ETH (+0.49% net){RESET} | {BOLD}{GREEN}FIL-ETH (+0.32% net){RESET}")
-        print(f"  Hosting Overhead:  ~£5.20 / month fixed")
+        if info["state"] in ("stopped", "stopping"):
+            print(f"  Engine State:      {BOLD}{YELLOW}STOPPED (Decommissioned / Preserving Capital){RESET}")
+            print(f"  EC2 Instance:      {BOLD}{info['instance_id']}{RESET} ({info['itype']} in {info['az']})")
+            print(f"  Compute Billing:   {BOLD}{GREEN}HALTED (£0.00/hr - Saving ~£35/yr){RESET}")
+            print(f"  Portfolio Action:  {BOLD}{GREEN}100% of Capital Released to Volatility Ping-Pong{RESET}")
+            print(f"  Strategy Focus:    Pure AWS Lambda Free Tier (£0.00/mo hosting forever)")
+        else:
+            state_color = GREEN if info["state"] == "running" else YELLOW
+            ping_color = GREEN if info["ping"] == "Online" else YELLOW
+            print(f"  Engine State:      {BOLD}{state_color}{info['state'].upper()}{RESET} ({BOLD}{ping_color}{info['ping']} in SSM{RESET})")
+            print(f"  EC2 Instance:      {BOLD}{info['instance_id']}{RESET} ({info['itype']} in {info['az']})")
+            print(f"  Network Latency:   {BOLD}{GREEN}<15ms{RESET} (Colocated in Dublin with Kraken matching engines)")
+            print(f"  WebSocket Feed:    {BOLD}Connected to wss://ws.kraken.com/v2{RESET}")
+            print(f"  Monitored Markets: {BOLD}57 Triangles across 78 pairs{RESET}")
+            print(f"  Ring-Fenced Pool:  {BOLD}{GREEN}£{RESERVED_ARB_CAPITAL_GBP:.2f}{RESET} (Guarded against Ping-Pong bot)")
+            print(f"  Execution Mode:    {BOLD}{GREEN}ACTIVE LIVE EXECUTION{RESET} (Atomic IOC 3-Leg with Emergency Rescue)")
+            print(f"  Net Profit Hurdle: {BOLD}{GREEN}+0.30% Net{RESET} (after 3x trading fees)")
+            print(f"  Safety Guardrails: {BOLD}60s Cooldown | Auto-Market Exit to GBP | Zero Stranded Crypto{RESET}")
+            print(f"  Recent Spreads:    {BOLD}{GREEN}ALGO-ETH (+1.35% net){RESET} | {BOLD}{GREEN}BCH-ETH (+0.49% net){RESET} | {BOLD}{GREEN}FIL-ETH (+0.32% net){RESET}")
+            print(f"  Hosting Overhead:  ~£5.20 / month fixed")
     else:
         print(f"  Engine State:      {YELLOW}OFFLINE / UNPROVISIONED{RESET}")
 

@@ -18,21 +18,18 @@ The AI will immediately know the entire system state, architecture, and current 
 Both engines run **100% in the AWS cloud (Dublin `eu-west-1`)**, not on your local computer. Your Mac Mini and MacBook are simply remote-control dashboards.
 
 ```
-Total Portfolio Equity: £78.74 (Unified Kraken Pro Account)
+Total Portfolio Equity: ~£78.04 (Unified Kraken Pro Account)
  │
- ├── Engine 1: Volatility Ping-Pong (AWS Lambda, £0.00/mo)
- │     • Allocation: £48.74 across 3 pairs (£15.58/pair)
- │     • Permanent Fee Buffer: £2.00 (Uncommitted cash reserve)
- │     • BTCGBP: Phase 2/2 — Limit Buy filled @ £62,915.60. Limit Sell resting @ £63,909.60 (+£0.17 profit on fill).
- │     • SOLGBP: Phase 1/2 — Limit Buy resting @ £88.62 (0.14% away from filling).
- │     • ETHGBP: Phase 1/2 — Limit Buy resting @ £2,020.50 (0.61% away from filling).
+ ├── Engine 1: Volatility Ping-Pong (AWS Lambda, £0.00/mo Forever)
+ │     • Allocation: £78.04 across 3 pairs (~£25.23/pair)
+ │     • Permanent Fee Buffer: £2.34 (Safety reserve)
+ │     • BTCGBP: Phase 2/2 — Bought @ £62,915.60. Limit Sell resting @ £63,909.60 (+£0.17 on fill).
+ │     • SOLGBP: Phase 2/2 — Bought @ £88.62. Limit Sell resting @ £90.59 (+£0.27 on fill).
+ │     • ETHGBP: Phase 1/2 — Limit Buy resting @ £2,020.50 (holding cash).
  │
- └── Engine 2: Triangular Arbitrage Daemon (AWS EC2 Dublin, ~£5.20/mo)
-       • Instance: i-0b809d2522f8129a0 (t4g.nano in eu-west-1a)
-       • Allocation: £30.00 dedicated ring-fenced pool
-       • Execution Mode: LIVE (TAKER) with atomic IOC limit orders
-       • Net Hurdle: Minimum +0.30% net profit after 3x fees
-       • Safeguards: 60s cooldown, instant emergency market exit back to GBP on failure (zero stranded crypto)
+ └── Engine 2: Triangular Arbitrage Daemon (EC2 Dublin) [STOPPED / DECOMMISSIONED]
+       • Instance: i-0b809d2522f8129a0 (STOPPED — Compute billing halted, saving ~£35/year)
+       • Status: All capital safely released 100% to Volatility Ping-Pong
 ```
 
 ---
