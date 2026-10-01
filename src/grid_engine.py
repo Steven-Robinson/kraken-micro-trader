@@ -222,7 +222,7 @@ def process_grid_pair(
                 store.save_state(state)
 
                 send_alert_fn(
-                    f"[Kraken Micro-Grid] Rung {rung_id} Buy Filled: {pair} (+{target_pct}% Target)",
+                    f"[Kraken Micro-Trader] Rung {rung_id} Buy Filled: {pair} (+{target_pct}% Target)",
                     f"Rung {rung_id} on {pair} executed its limit buy!\n\n"
                     f"• Filled: {actual_volume} {pair[:3]} @ £{actual_price}\n"
                     f"• Cost: £{(actual_price * actual_volume):.2f}\n"
@@ -287,7 +287,7 @@ def process_grid_pair(
                 store.save_state(state)
 
                 send_alert_fn(
-                    f"[Kraken Micro-Grid] 💰 Profit Banked on {pair} (+£{net_profit:.2f})",
+                    f"[Kraken Micro-Trader] 💰 Profit Banked on {pair} (+£{net_profit:.2f})",
                     f"Rung {rung_id} on {pair} hit its limit sell target!\n\n"
                     f"• Pair: {pair}\n"
                     f"• Net Profit Realized: +£{net_profit:.4f}\n"

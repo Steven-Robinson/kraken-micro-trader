@@ -77,6 +77,19 @@ This queries the live DynamoDB state, EC2 status in Dublin, and Kraken order boo
 ---
 
 ## 5. Gmail Filter Configuration
+To ensure **100% of all bot trade alerts and exchange emails** skip your primary inbox and go directly into your `Kraken Trades` label:
+
 * **Label:** `Kraken Trades`
-* **Filter Rule:** `subject:("[Kraken Micro-Trader]" OR "[Kraken Arb]" OR "AWS Notification - Subscription Confirmation")`
-* **Action:** Skip the Inbox (Archive it) & Apply label `Kraken Trades`.
+* **Filter Rule (Recommended — catches 100% of AWS SNS bot alerts & Kraken Pro emails):**
+  ```text
+  from:(no-reply@sns.amazonaws.com OR noreply@kraken.com)
+  ```
+* **Alternative Subject Rule:**
+  ```text
+  subject:("[Kraken Micro-Trader]" OR "[Kraken Arb]" OR "[Kraken Micro-Grid]" OR "AWS Notification - Subscription Confirmation")
+  ```
+* **Actions Checked:**
+  - [x] **Skip the Inbox (Archive it)**
+  - [x] **Apply the label:** `Kraken Trades`
+  - [x] **Never send it to Spam**
+
