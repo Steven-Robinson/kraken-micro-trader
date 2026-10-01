@@ -324,7 +324,6 @@ class WebSocketArbDaemon:
                 "⚡ [MAKER SPREAD] FORWARD %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg1: £%s, Cross: %s, Leg3: £%s",
                 route.asset_a, route.asset_b, fwd_maker_net_pct, profit, self.trade_capital, p1_bid, pc_ask, p3_ask
             )
-            self._maybe_alert("FORWARD", route, fwd_maker_net_pct, profit, p1_bid, pc_ask, p3_ask)
 
             if self.execution_mode == "MAKER":
                 opp = ArbitrageOpportunity(
@@ -355,7 +354,6 @@ class WebSocketArbDaemon:
                 "⚡ [MAKER SPREAD] REVERSE %s-%s | Net: %+.3f%% (+£%s on £%s) | Leg3: £%s, Cross: %s, Leg1: £%s",
                 route.asset_a, route.asset_b, rev_maker_net_pct, profit, self.trade_capital, p3_bid, pc_bid, p1_ask
             )
-            self._maybe_alert("REVERSE", route, rev_maker_net_pct, profit, p3_bid, pc_bid, p1_ask)
 
             if self.execution_mode == "MAKER":
                 opp = ArbitrageOpportunity(
