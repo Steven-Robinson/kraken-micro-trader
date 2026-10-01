@@ -178,6 +178,7 @@ def process_grid_pair(
                 rung["order_placed_at"] = int(time.time())
                 available_cash = max(Decimal("0"), available_cash - effective_rung_capital)
                 state_changed = True
+                store.save_state(state)
             except Exception as e:
                 logger.error("[%s Rung %s] Failed to place limit buy: %s", pair, rung_id, e)
 
@@ -189,6 +190,7 @@ def process_grid_pair(
             if not txid:
                 rung["state"] = "IDLE"
                 state_changed = True
+                store.save_state(state)
                 continue
 
             order_info = client.query_order(txid)
@@ -217,6 +219,7 @@ def process_grid_pair(
                 rung["applied_target_pct"] = str(target_pct)
                 rung["order_placed_at"] = int(time.time())
                 state_changed = True
+                store.save_state(state)
 
                 send_alert_fn(
                     f"[Kraken Micro-Grid] Rung {rung_id} Buy Filled: {pair} (+{target_pct}% Target)",
@@ -228,19 +231,21 @@ def process_grid_pair(
                 )
 
             elif status == "open":
-                order_age_hours = (time.time() - rung.get("order_placed_at", time.time())) / 3600
+                order_age_hours = (time.time() - float(rung.get("order_placed_at", time.time()))) / 3600
                 if order_age_hours > float(MAX_STALE_HOURS):
                     logger.info("[%s Rung %s] Buy order %s stale (%.1f h). Canceling to re-quote.", pair, rung_id, txid, order_age_hours)
                     client.cancel_order(txid)
                     rung["state"] = "IDLE"
                     rung["active_order_id"] = None
                     state_changed = True
+                    store.save_state(state)
 
             elif status in ("canceled", "expired"):
                 logger.warning("[%s Rung %s] Buy order %s was %s. Resetting to IDLE.", pair, rung_id, txid, status)
                 rung["state"] = "IDLE"
                 rung["active_order_id"] = None
                 state_changed = True
+                store.save_state(state)
 
         # -------------------------------------------------------------
         # 3. RUNG SELL_PLACED -> Check Fill -> Realize Profit -> Reset
@@ -279,6 +284,7 @@ def process_grid_pair(
                 rung["state"] = "IDLE"
                 rung["active_order_id"] = None
                 state_changed = True
+                store.save_state(state)
 
                 send_alert_fn(
                     f"[Kraken Micro-Grid] 💰 Profit Banked on {pair} (+£{net_profit:.2f})",

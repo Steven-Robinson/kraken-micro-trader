@@ -258,7 +258,11 @@ def process_pair(
 
     state = store.load_state()
     current_state = state.get("state", "IDLE")
-    logger.info("[%s] Current Bot State: %s (Bot ID: %s)", pair, current_state, bot_id)
+    if state.get("version") == "grid_v2":
+        rungs_summary = ", ".join(f"Rung {k}: {v.get('state')}" for k, v in state.get("rungs", {}).items())
+        logger.info("[%s] Current Bot State: Grid v2 (%s) (Bot ID: %s)", pair, rungs_summary, bot_id)
+    else:
+        logger.info("[%s] Current Bot State: %s (Bot ID: %s)", pair, current_state, bot_id)
 
     if current_state == "PAUSED":
         logger.warning("[%s] Bot is PAUSED. Halting execution.", pair)
@@ -453,7 +457,7 @@ def _handle_buy_placed(
 
     elif status == "open":
         # Check if the order has been sitting unfilled too long
-        order_age_hours = (time.time() - state.get("order_placed_at", time.time())) / 3600
+        order_age_hours = (time.time() - float(state.get("order_placed_at", time.time()))) / 3600
         if order_age_hours > float(MAX_STALE_HOURS):
             logger.warning("[%s] Buy order %s has been open for %.1f hours. Cancelling to replace.", pair, txid, order_age_hours)
             client.cancel_order(txid)

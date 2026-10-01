@@ -181,6 +181,49 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(len(self.alerts), 1)
         self.assertIn("Profit Banked", self.alerts[0][0])
 
+    def test_process_grid_handles_decimal_order_placed_at_from_dynamodb(self):
+        """Ensure DynamoDB Decimals for order_placed_at do not raise TypeError on float subtraction."""
+        state = initialize_grid_state("ETHGBP")
+        state["rungs"]["1"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-BUY-R1",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "1988.00",
+            "last_buy_volume": "0.0062",
+            "target_sell_price": "0.0",
+            "order_placed_at": Decimal("1790865385"),
+        }
+        state["rungs"]["2"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-BUY-R2",
+            "discount_pct": "1.40",
+            "target_pct": "1.20",
+            "last_buy_price": "1972.00",
+            "last_buy_volume": "0.0063",
+            "target_sell_price": "0.0",
+            "order_placed_at": Decimal("1790865385"),
+        }
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("1995.00"), "ask": Decimal("1996.00"), "last": Decimal("1995.00")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("15.00")}
+        self.mock_client.query_order.return_value = {"status": "open"}
+
+        # Must not raise TypeError: unsupported operand type(s) for -: 'float' and 'decimal.Decimal'
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+        self.assertEqual(res["rungs"]["1"]["state"], "BUY_PLACED")
+        self.assertEqual(res["rungs"]["2"]["state"], "BUY_PLACED")
+
 
 if __name__ == "__main__":
     unittest.main()
