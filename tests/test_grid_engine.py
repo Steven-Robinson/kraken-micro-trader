@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import MagicMock
 
-from grid_engine import initialize_grid_state, process_grid_pair, DEFAULT_RUNGS_CONFIG
+from grid_engine import initialize_grid_state, process_grid_pair, DEFAULT_RUNGS_CONFIG, get_rungs_config
 
 
 class TestGridEngine(unittest.TestCase):
@@ -332,6 +332,127 @@ class TestGridEngine(unittest.TestCase):
 
         # Order should be cancelled to re-deploy at full size
         self.mock_client.cancel_order.assert_called_with("TXID-UNDERSIZED")
+
+    def test_get_rungs_config_thresholds(self):
+        """Verify dynamic rung configuration returns appropriate rungs based on capital."""
+        # 1. Under £45 -> 2 rungs
+        cfg_2 = get_rungs_config(Decimal("25.00"))
+        self.assertEqual(len(cfg_2), 2)
+        self.assertEqual(cfg_2[0]["weight"] + cfg_2[1]["weight"], Decimal("1.00"))
+
+        # 2. £45 to £80 -> 3 rungs
+        cfg_3 = get_rungs_config(Decimal("50.00"))
+        self.assertEqual(len(cfg_3), 3)
+        self.assertEqual(cfg_3[0]["rung_id"], "1")
+        self.assertEqual(cfg_3[1]["rung_id"], "2")
+        self.assertEqual(cfg_3[2]["rung_id"], "3")
+        self.assertEqual(cfg_3[0]["weight"] + cfg_3[1]["weight"] + cfg_3[2]["weight"], Decimal("1.00"))
+        # Rung 3 targets a deeper dip
+        self.assertEqual(cfg_3[2]["discount_pct"], Decimal("2.80"))
+
+        # 3. £80+ -> 4 rungs
+        cfg_4 = get_rungs_config(Decimal("100.00"))
+        self.assertEqual(len(cfg_4), 4)
+        total_weight = sum(c["weight"] for c in cfg_4)
+        self.assertEqual(total_weight, Decimal("1.00"))
+
+    def test_dynamic_scaling_activates_rung_3_when_capital_reaches_50(self):
+        """Verify that when pair capital increases to £50, Rung 3 is automatically created and placed."""
+        state = initialize_grid_state("ETHGBP", pair_capital=Decimal("25.00"))
+        # Initially only 2 rungs
+        self.assertIn("1", state["rungs"])
+        self.assertIn("2", state["rungs"])
+        self.assertNotIn("3", state["rungs"])
+
+        # Set Rung 1 & 2 as BUY_PLACED
+        state["rungs"]["1"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-BUY-R1",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "1988.00",
+            "last_buy_volume": "0.0062",
+            "order_placed_at": Decimal(str(int(time.time()))),
+        }
+        state["rungs"]["2"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-BUY-R2",
+            "discount_pct": "1.40",
+            "target_pct": "1.20",
+            "last_buy_price": "1972.00",
+            "last_buy_volume": "0.0063",
+            "order_placed_at": Decimal(str(int(time.time()))),
+        }
+
+        # Market ticker
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2000.00"), "ask": Decimal("2001.00"), "last": Decimal("2000.50")}
+        # Lots of free cash available (£60.00)
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("60.00")}
+        self.mock_client.query_order.return_value = {"status": "open"}
+        self.mock_client.get_open_orders.return_value = {}
+        self.mock_client.place_limit_order.return_value = "TXID-BUY-R3"
+
+        # Process with expanded capital £50.00 (triggers 3 rungs)
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            Decimal("50.00"),
+            self.send_alert_fn,
+        )
+
+        # Rung 3 should now exist and be BUY_PLACED
+        rungs = res["rungs"]
+        self.assertIn("3", rungs)
+        self.assertEqual(rungs["3"]["state"], "BUY_PLACED")
+        self.assertEqual(rungs["3"]["active_order_id"], "TXID-BUY-R3")
+        # Rung 3 discount is 2.80%: 2000 * (1 - 0.028) = 1944.00
+        self.assertEqual(rungs["3"]["last_buy_price"], "1944.00")
+
+    def test_dynamic_scaling_preserves_sell_order_when_capital_downscales(self):
+        """Verify that if capital drops, a decommissioned rung in SELL_PLACED is preserved until fill."""
+        state = initialize_grid_state("ETHGBP", pair_capital=Decimal("50.00"))
+        state["rungs"]["3"] = {
+            "state": "SELL_PLACED",
+            "active_order_id": "TXID-SELL-R3",
+            "discount_pct": "2.80",
+            "target_pct": "1.80",
+            "last_buy_price": "1944.00",
+            "last_buy_volume": "0.0064",
+            "target_sell_price": "1984.82",
+            "order_placed_at": Decimal(str(int(time.time()))),
+        }
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("1990.00"), "ask": Decimal("1991.00"), "last": Decimal("1990.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
+        # Rung 3 sell fills!
+        self.mock_client.query_order.return_value = {
+            "status": "closed",
+            "price": Decimal("1984.82"),
+            "vol_exec": Decimal("0.0064"),
+        }
+
+        # Run with down-scaled capital £25.00 (which only defines rungs 1 and 2)
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            Decimal("25.00"),
+            self.send_alert_fn,
+        )
+
+        # Rung 3 should have banked its profit and reset to IDLE!
+        self.assertEqual(res["rungs"]["3"]["state"], "IDLE")
+        self.assertEqual(res["trades_completed"], 1)
+        self.assertGreater(Decimal(res["total_profit_gbp"]), Decimal("0.10"))
 
 
 if __name__ == "__main__":

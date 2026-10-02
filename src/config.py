@@ -43,14 +43,23 @@ MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "3.0"
 # Discount below current market price for limit buy orders (0.1% - 0.3% ensures Maker status)
 BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "0.2"))
 
+# Dynamic Grid Rungs Configuration (Auto-scaling rungs by capital)
+DYNAMIC_RUNGS_ENABLED = os.getenv("DYNAMIC_RUNGS_ENABLED", "true").lower() in ("true", "1", "yes")
+RUNG_3_MIN_PAIR_CAPITAL_GBP = Decimal(os.getenv("RUNG_3_MIN_PAIR_CAPITAL_GBP", "45.00"))
+RUNG_4_MIN_PAIR_CAPITAL_GBP = Decimal(os.getenv("RUNG_4_MIN_PAIR_CAPITAL_GBP", "80.00"))
+
 # Hours before an unfilled limit buy order is considered stale and re-evaluated
 RUNG_1_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_1_MAX_STALE_HOURS", "4.0"))
 RUNG_2_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_2_MAX_STALE_HOURS", "24.0"))
+RUNG_3_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_3_MAX_STALE_HOURS", "48.0"))
+RUNG_4_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_4_MAX_STALE_HOURS", "72.0"))
 MAX_STALE_HOURS = RUNG_2_MAX_STALE_HOURS  # Backwards compatibility fallback
 
 # Price drift threshold: if market rallies above limit buy order, cancel and re-quote to follow the trend
 RUNG_1_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_1_MAX_DRIFT_PERCENT", "1.5"))
 RUNG_2_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_2_MAX_DRIFT_PERCENT", "3.5"))
+RUNG_3_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_3_MAX_DRIFT_PERCENT", "5.0"))
+RUNG_4_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_4_MAX_DRIFT_PERCENT", "7.5"))
 
 # Auto-resize threshold: if order capital is severely undersized (<60% target) and cash is free, refresh it
 UNDERSIZED_THRESHOLD_PERCENT = Decimal(os.getenv("UNDERSIZED_THRESHOLD_PERCENT", "0.60"))

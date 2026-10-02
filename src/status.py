@@ -105,9 +105,11 @@ def display_pair_status(pair: str):
     print(f"  Trading Pair:      {BOLD}{pair}{RESET} ({bot_id})")
 
     if state.get("version") == "grid_v2":
-        print(f"  Strategy Mode:     {BOLD}{CYAN}2-RUNG MICRO-GRID (Compounding Intraday Dips){RESET}")
         rungs = state.get("rungs", {})
-        for rid in ("1", "2"):
+        sorted_rids = sorted(rungs.keys(), key=lambda x: int(x) if x.isdigit() else 99)
+        active_count = len(sorted_rids)
+        print(f"  Strategy Mode:     {BOLD}{CYAN}{active_count}-RUNG DYNAMIC MICRO-GRID (Compounding Intraday Dips){RESET}")
+        for rid in sorted_rids:
             rdata = rungs.get(rid, {})
             r_state = rdata.get("state", "IDLE")
             r_color = GREEN if "PLACED" in r_state else YELLOW
@@ -124,14 +126,14 @@ def display_pair_status(pair: str):
                 vol = Decimal(r_vol)
                 gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
                 net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
-                print(f"  • Rung {rid} (50%):     {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{r_buy})")
+                print(f"  • Rung {rid}:            {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{r_buy})")
                 print(f"    Target Sell:     £{r_target} | Pending Profit: {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET}")
                 print(f"    Active Order:    {r_order}")
             elif r_state == "BUY_PLACED":
-                print(f"  • Rung {rid} (50%):     {BOLD}{r_color}BUY_PLACED{RESET} @ £{r_buy} (-{r_disc}% dip) | Target: +{r_gain}%")
+                print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{r_buy} (-{r_disc}% dip) | Target: +{r_gain}%")
                 print(f"    Active Order:    {r_order}")
             else:
-                print(f"  • Rung {rid} (50%):     {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
+                print(f"  • Rung {rid}:            {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
     else:
         state_color = GREEN if "PLACED" in current_state else YELLOW
         print(f"  Strategy Mode:     {BOLD}LEGACY SINGLE-ORDER{RESET} (Auto-migrates to Grid upon Sell Fill)")
@@ -183,7 +185,7 @@ def display_status():
     print(f"\n{BOLD}{CYAN}============================================================{RESET}")
     print(f"               {BOLD}KRAKEN MICRO-TRADER STATUS{RESET}")
     print(f"{BOLD}{CYAN}============================================================{RESET}")
-    print(f"  Active Strategy:   {BOLD}Serverless 2-Rung Micro-Grid (AWS Lambda £0.00/mo){RESET}")
+    print(f"  Active Strategy:   {BOLD}Serverless Multi-Rung Dynamic Micro-Grid (AWS Lambda £0.00/mo){RESET}")
     print(f"  Trading Pairs:     {BOLD}{', '.join(TRADING_PAIRS)}{RESET}")
 
     meta = get_portfolio_metadata()

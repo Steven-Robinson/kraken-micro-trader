@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from config import (
     BUY_DISCOUNT_PERCENT,
+    DYNAMIC_RUNGS_ENABLED,
     DYNAMIC_TARGET_ENABLED,
     MAX_PROFIT_TARGET_PERCENT,
     MAX_STALE_HOURS,
@@ -25,6 +26,12 @@ from config import (
     RUNG_1_MAX_STALE_HOURS,
     RUNG_2_MAX_DRIFT_PERCENT,
     RUNG_2_MAX_STALE_HOURS,
+    RUNG_3_MAX_DRIFT_PERCENT,
+    RUNG_3_MAX_STALE_HOURS,
+    RUNG_3_MIN_PAIR_CAPITAL_GBP,
+    RUNG_4_MAX_DRIFT_PERCENT,
+    RUNG_4_MAX_STALE_HOURS,
+    RUNG_4_MIN_PAIR_CAPITAL_GBP,
     UNDERSIZED_THRESHOLD_PERCENT,
 )
 from kraken_client import KrakenClient
@@ -33,21 +40,100 @@ from volatility import compute_volatility_target
 
 logger = logging.getLogger(__name__)
 
-# Default specifications for a 2-Rung Micro-Grid
-DEFAULT_RUNGS_CONFIG = [
-    {
-        "rung_id": "1",
-        "weight": Decimal("0.50"),        # 50% of pair capital (~£12.50)
-        "discount_pct": Decimal("0.60"),  # 0.60% below best bid (light noise)
-        "target_pct": Decimal("1.00"),    # +1.00% target (+0.50% net after Maker fees)
-    },
-    {
-        "rung_id": "2",
-        "weight": Decimal("0.50"),        # 50% of pair capital (~£12.50)
-        "discount_pct": Decimal("1.40"),  # 1.40% below best bid (deeper intraday dip)
-        "target_pct": Decimal("1.20"),    # +1.20% target (+0.70% net after Maker fees)
-    },
-]
+
+def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
+    """Determine dynamic rung layout and allocations based on pair capital.
+
+    Thresholds:
+      • Under £45.00/pair (<~£135 total): 2 rungs (50%/50%)
+      • £45.00 - £80.00/pair (~£135-£240 total): 3 rungs (40%/35%/25%)
+      • £80.00+/pair (>=~£240 total): 4 rungs (30%/30%/20%/20%)
+    """
+    if not DYNAMIC_RUNGS_ENABLED or pair_capital < RUNG_3_MIN_PAIR_CAPITAL_GBP:
+        return [
+            {
+                "rung_id": "1",
+                "weight": Decimal("0.50"),
+                "discount_pct": Decimal("0.60"),
+                "target_pct": Decimal("1.00"),
+                "stale_hours": RUNG_1_MAX_STALE_HOURS,
+                "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "2",
+                "weight": Decimal("0.50"),
+                "discount_pct": Decimal("1.40"),
+                "target_pct": Decimal("1.20"),
+                "stale_hours": RUNG_2_MAX_STALE_HOURS,
+                "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
+            },
+        ]
+    elif pair_capital < RUNG_4_MIN_PAIR_CAPITAL_GBP:
+        return [
+            {
+                "rung_id": "1",
+                "weight": Decimal("0.40"),
+                "discount_pct": Decimal("0.60"),
+                "target_pct": Decimal("1.00"),
+                "stale_hours": RUNG_1_MAX_STALE_HOURS,
+                "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "2",
+                "weight": Decimal("0.35"),
+                "discount_pct": Decimal("1.50"),
+                "target_pct": Decimal("1.30"),
+                "stale_hours": RUNG_2_MAX_STALE_HOURS,
+                "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "3",
+                "weight": Decimal("0.25"),
+                "discount_pct": Decimal("2.80"),
+                "target_pct": Decimal("1.80"),
+                "stale_hours": RUNG_3_MAX_STALE_HOURS,
+                "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
+            },
+        ]
+    else:
+        return [
+            {
+                "rung_id": "1",
+                "weight": Decimal("0.30"),
+                "discount_pct": Decimal("0.60"),
+                "target_pct": Decimal("1.00"),
+                "stale_hours": RUNG_1_MAX_STALE_HOURS,
+                "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "2",
+                "weight": Decimal("0.30"),
+                "discount_pct": Decimal("1.50"),
+                "target_pct": Decimal("1.30"),
+                "stale_hours": RUNG_2_MAX_STALE_HOURS,
+                "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "3",
+                "weight": Decimal("0.20"),
+                "discount_pct": Decimal("3.00"),
+                "target_pct": Decimal("2.00"),
+                "stale_hours": RUNG_3_MAX_STALE_HOURS,
+                "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
+            },
+            {
+                "rung_id": "4",
+                "weight": Decimal("0.20"),
+                "discount_pct": Decimal("5.00"),
+                "target_pct": Decimal("3.00"),
+                "stale_hours": RUNG_4_MAX_STALE_HOURS,
+                "drift_pct": RUNG_4_MAX_DRIFT_PERCENT,
+            },
+        ]
+
+
+# Default specifications for baseline fallback
+DEFAULT_RUNGS_CONFIG = get_rungs_config(Decimal("25.00"))
 
 
 def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal:
@@ -56,35 +142,27 @@ def _round_decimal(val: Decimal, places: int, rounding=ROUND_HALF_UP) -> Decimal
     return val.quantize(q, rounding=rounding)
 
 
-def initialize_grid_state(pair: str) -> dict[str, Any]:
-    """Create an empty 2-rung micro-grid state structure."""
+def initialize_grid_state(pair: str, pair_capital: Decimal = Decimal("25.00")) -> dict[str, Any]:
+    """Create an empty micro-grid state structure matching pair capital."""
+    cfgs = get_rungs_config(pair_capital)
+    rungs = {}
+    for cfg in cfgs:
+        rungs[cfg["rung_id"]] = {
+            "state": "IDLE",
+            "active_order_id": None,
+            "discount_pct": str(cfg["discount_pct"]),
+            "target_pct": str(cfg["target_pct"]),
+            "last_buy_price": "0.0",
+            "last_buy_volume": "0.0",
+            "target_sell_price": "0.0",
+            "order_placed_at": 0,
+        }
     return {
         "bot_id": f"{pair}-PINGPONG",
         "version": "grid_v2",
         "trades_completed": 0,
         "total_realized_profit_gbp": "0.0000",
-        "rungs": {
-            "1": {
-                "state": "IDLE",
-                "active_order_id": None,
-                "discount_pct": str(DEFAULT_RUNGS_CONFIG[0]["discount_pct"]),
-                "target_pct": str(DEFAULT_RUNGS_CONFIG[0]["target_pct"]),
-                "last_buy_price": "0.0",
-                "last_buy_volume": "0.0",
-                "target_sell_price": "0.0",
-                "order_placed_at": 0,
-            },
-            "2": {
-                "state": "IDLE",
-                "active_order_id": None,
-                "discount_pct": str(DEFAULT_RUNGS_CONFIG[1]["discount_pct"]),
-                "target_pct": str(DEFAULT_RUNGS_CONFIG[1]["target_pct"]),
-                "last_buy_price": "0.0",
-                "last_buy_volume": "0.0",
-                "target_sell_price": "0.0",
-                "order_placed_at": 0,
-            },
-        },
+        "rungs": rungs,
     }
 
 
@@ -160,6 +238,36 @@ def process_grid_pair(
 
     state_changed = False
 
+    # Determine dynamic rungs configuration based on allocated pair capital
+    rungs_cfg = get_rungs_config(total_pair_capital)
+    active_rung_ids = {cfg["rung_id"] for cfg in rungs_cfg}
+
+    # Handle decommissioned rungs if capital ever down-scales:
+    # 1. If BUY_PLACED on a decommissioned rung, cancel the buy order to free up cash.
+    # 2. If SELL_PLACED, KEEP IT in rungs_cfg until the sell fills at profit!
+    for r_id, r_data in list(rungs.items()):
+        if r_id not in active_rung_ids:
+            if r_data.get("state") == "BUY_PLACED":
+                old_buy_txid = r_data.get("active_order_id")
+                if old_buy_txid and not client.dry_run:
+                    try:
+                        client.cancel_order(old_buy_txid)
+                        logger.info("[%s Decommission Rung %s] Cancelled buy order %s due to capital down-scaling", pair, r_id, old_buy_txid)
+                    except Exception as e:
+                        logger.warning("[%s Decommission Rung %s] Could not cancel buy %s: %s", pair, r_id, old_buy_txid, e)
+                r_data["state"] = "IDLE"
+                r_data["active_order_id"] = None
+                state_changed = True
+            elif r_data.get("state") == "SELL_PLACED":
+                rungs_cfg.append({
+                    "rung_id": r_id,
+                    "weight": Decimal("0"),
+                    "discount_pct": Decimal(r_data.get("discount_pct", "2.80")),
+                    "target_pct": Decimal(r_data.get("target_pct", "1.80")),
+                    "stale_hours": Decimal("48.0"),
+                    "drift_pct": Decimal("5.0"),
+                })
+
     # -------------------------------------------------------------
     # 0. AUTO-ADOPTION / INVENTORY RECONCILIATION
     # Detect unmanaged/orphaned crypto in wallet and place Limit Sell
@@ -191,14 +299,14 @@ def process_grid_pair(
         if uncommitted_crypto >= ordermin:
             # Find an available rung to adopt this crypto into SELL_PLACED
             target_rung_id = None
-            for cfg in DEFAULT_RUNGS_CONFIG:
+            for cfg in rungs_cfg:
                 r_id = cfg["rung_id"]
                 if rungs.get(r_id, {}).get("state") == "IDLE":
                     target_rung_id = r_id
                     break
 
             if not target_rung_id:
-                for cfg in DEFAULT_RUNGS_CONFIG:
+                for cfg in rungs_cfg:
                     r_id = cfg["rung_id"]
                     if rungs.get(r_id, {}).get("state") == "BUY_PLACED":
                         target_rung_id = r_id
@@ -263,7 +371,7 @@ def process_grid_pair(
     except Exception as e:
         logger.warning("[%s Auto-Adopt] Error during reconciliation check: %s", pair, e)
 
-    for cfg in DEFAULT_RUNGS_CONFIG:
+    for cfg in rungs_cfg:
         rung_id = cfg["rung_id"]
         rung = rungs.setdefault(rung_id, {
             "state": "IDLE",
@@ -371,12 +479,12 @@ def process_grid_pair(
                 order_vol = Decimal(str(rung.get("last_buy_volume", "0")))
                 order_capital = order_buy_price * order_vol
 
-                # 1. Asymmetric Stale Timeout: 4h for Rung 1 (quick scalp), 24h for Rung 2 (patient dip)
-                stale_threshold = RUNG_1_MAX_STALE_HOURS if rung_id == "1" else RUNG_2_MAX_STALE_HOURS
+                # 1. Asymmetric Stale Timeout
+                stale_threshold = cfg.get("stale_hours", Decimal("24.0"))
                 is_stale = order_age_hours > float(stale_threshold)
 
                 # 2. Price Drift Detection: Has market rallied away above our limit buy?
-                drift_threshold = RUNG_1_MAX_DRIFT_PERCENT if rung_id == "1" else RUNG_2_MAX_DRIFT_PERCENT
+                drift_threshold = cfg.get("drift_pct", Decimal("3.5"))
                 has_drifted = False
                 drift_pct = Decimal("0")
                 if order_buy_price > Decimal("0") and best_bid > Decimal("0"):
