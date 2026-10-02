@@ -24,10 +24,21 @@ logger.setLevel(logging.INFO)
 LOCAL_STATE_FILE = "local_state.json"
 
 
+def _convert_floats_to_decimal(obj: Any) -> Any:
+    """Recursively convert float types to Decimal for DynamoDB compatibility."""
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _convert_floats_to_decimal(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_convert_floats_to_decimal(x) for x in obj]
+    return obj
+
+
 class StateStore:
     """Interface for saving and loading bot state."""
 
-    def __init__(self, table_name: str, bot_id: str, aws_region: str = "eu-west-2"):
+    def __init__(self, table_name: str, bot_id: str, aws_region: str = "eu-west-1"):
         self.table_name = table_name
         self.bot_id = bot_id
         self.aws_region = aws_region
@@ -84,13 +95,8 @@ class StateStore:
 
         if self.use_dynamodb:
             try:
-                # DynamoDB item serialization
-                item = {}
-                for k, v in state.items():
-                    if isinstance(v, float):
-                        item[k] = Decimal(str(v))
-                    else:
-                        item[k] = v
+                # Recursively convert any floats (including in nested dicts/lists) to Decimal
+                item = _convert_floats_to_decimal(state)
                 self.table.put_item(Item=item)
             except ClientError as e:
                 logger.error("Failed to save state to DynamoDB: %s", e)

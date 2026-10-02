@@ -514,6 +514,83 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(res2["rungs"]["1"]["active_order_id"], "TXID-BUY-R1")
         self.assertFalse(res2["rungs"]["1"].get("velocity_paused"))
 
+    def test_partial_fill_on_buy_cancellation_transitions_to_sell(self):
+        """Verify that when a buy order is cancelled (e.g. drift or timeout) with a partial fill, it immediately creates a limit sell."""
+        state = initialize_grid_state("ETHGBP")
+        state["rungs"]["1"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-PARTIAL-BUY",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "2000.00",
+            "last_buy_volume": "0.0100",
+            "target_sell_price": "0.0",
+            "order_placed_at": Decimal(str(int(time.time() - 36000))),  # 10h old (>4h stale!)
+        }
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2005.00"), "ask": Decimal("2006.00"), "last": Decimal("2005.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
+        # Query order returns status open with vol_exec = 0.0040 (partial fill!)
+        self.mock_client.query_order.return_value = {
+            "status": "open",
+            "price": Decimal("2000.00"),
+            "vol_exec": Decimal("0.0040"),
+            "cost": Decimal("8.00"),
+        }
+        self.mock_client.place_limit_order.return_value = "TXID-PARTIAL-SELL"
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # The partial fill must be adopted into SELL_PLACED immediately!
+        self.mock_client.cancel_order.assert_called_with("TXID-PARTIAL-BUY")
+        self.assertEqual(res["rungs"]["1"]["state"], "SELL_PLACED")
+        self.assertEqual(res["rungs"]["1"]["active_order_id"], "TXID-PARTIAL-SELL")
+        self.assertEqual(res["rungs"]["1"]["last_buy_volume"], "0.0040")
+
+    def test_external_sell_cancel_resets_to_idle(self):
+        """Verify that when a sell order is cancelled externally, the rung resets to IDLE for auto-adoption."""
+        state = initialize_grid_state("ETHGBP")
+        state["rungs"]["1"] = {
+            "state": "SELL_PLACED",
+            "active_order_id": "TXID-EXT-CANCEL",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "2000.00",
+            "last_buy_volume": "0.0050",
+            "target_sell_price": "2030.00",
+            "order_placed_at": Decimal(str(int(time.time() - 3600))),
+        }
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2020.00"), "ask": Decimal("2021.00"), "last": Decimal("2020.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
+        self.mock_client.query_order.return_value = {"status": "canceled"}
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Rung should reset to IDLE so held crypto can be adopted
+        self.assertEqual(res["rungs"]["1"]["state"], "IDLE")
+        self.assertIsNone(res["rungs"]["1"]["active_order_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

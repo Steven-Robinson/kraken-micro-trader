@@ -47,6 +47,14 @@ class KrakenClient:
 
     # --- Authentication Helper ---
 
+    def _next_nonce(self) -> int:
+        """Generate a strictly monotonically increasing millisecond nonce."""
+        nonce = int(time.time() * 1000)
+        if hasattr(self, "_last_nonce") and nonce <= self._last_nonce:
+            nonce = self._last_nonce + 1
+        self._last_nonce = nonce
+        return nonce
+
     def _get_signature(self, urlpath: str, data: dict[str, Any]) -> str:
         """Calculate HMAC-SHA512 API signature for private Kraken endpoints.
 
@@ -72,49 +80,60 @@ class KrakenClient:
         urlpath: str,
         data: dict[str, Any] | None = None,
         is_private: bool = False,
+        max_retries: int = 2,
     ) -> dict[str, Any]:
-        """Send an HTTP request to the Kraken API."""
+        """Send an HTTP request to the Kraken API with transient error retry."""
         url = f"{API_BASE_URL}{urlpath}"
         headers = {
             "User-Agent": "Kraken-Micro-Trader/1.0",
         }
 
-        encoded_data = None
-        if is_private:
-            if not self.api_key or not self.api_secret:
-                raise KrakenAPIError("API key and secret required for private requests.")
+        for attempt in range(max_retries + 1):
+            req_data = dict(data) if data is not None else {}
+            encoded_data = None
+            if is_private:
+                if not self.api_key or not self.api_secret:
+                    raise KrakenAPIError("API key and secret required for private requests.")
 
-            if data is None:
-                data = {}
-            # Monotonically increasing nonce in milliseconds
-            data["nonce"] = int(time.time() * 1000)
+                req_data["nonce"] = self._next_nonce()
+                headers["API-Key"] = self.api_key
+                headers["API-Sign"] = self._get_signature(urlpath, req_data)
+                encoded_data = urllib.parse.urlencode(req_data).encode("utf-8")
+            elif req_data:
+                query_string = urllib.parse.urlencode(req_data)
+                url = f"{API_BASE_URL}{urlpath}?{query_string}"
 
-            headers["API-Key"] = self.api_key
-            headers["API-Sign"] = self._get_signature(urlpath, data)
-            encoded_data = urllib.parse.urlencode(data).encode("utf-8")
-        elif data:
-            # Public GET with query params
-            query_string = urllib.parse.urlencode(data)
-            url = f"{url}?{query_string}"
+            req = urllib.request.Request(
+                url, data=encoded_data, headers=headers, method="POST" if is_private else "GET"
+            )
 
-        req = urllib.request.Request(
-            url, data=encoded_data, headers=headers, method="POST" if is_private else "GET"
-        )
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    body = response.read().decode("utf-8")
+                    payload = json.loads(body)
 
-        try:
-            with urllib.request.urlopen(req, timeout=10) as response:
-                body = response.read().decode("utf-8")
-                payload = json.loads(body)
+                    if payload.get("error"):
+                        err_str = str(payload["error"])
+                        if any(e in err_str for e in ("EService:Busy", "EService:Unavailable", "EAPI:Rate limit")) and attempt < max_retries:
+                            time.sleep(0.5 * (attempt + 1))
+                            continue
+                        raise KrakenAPIError(f"Kraken API error: {payload['error']}")
 
-                if payload.get("error"):
-                    raise KrakenAPIError(f"Kraken API error: {payload['error']}")
-
-                return payload.get("result", {})
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode("utf-8")
-            raise KrakenAPIError(f"HTTP {e.code}: {error_body}") from e
-        except Exception as e:
-            raise KrakenAPIError(f"Request failed: {str(e)}") from e
+                    return payload.get("result", {})
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode("utf-8") if hasattr(e, "read") else ""
+                if e.code in (502, 503, 504) and attempt < max_retries:
+                    logger.warning("Kraken HTTP %d on %s (attempt %d/%d), retrying...", e.code, urlpath, attempt + 1, max_retries)
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise KrakenAPIError(f"HTTP {e.code}: {error_body}") from e
+            except Exception as e:
+                err_msg = str(e).lower()
+                if attempt < max_retries and ("timeout" in err_msg or "reset" in err_msg or "disconnected" in err_msg):
+                    logger.warning("Transient network failure on %s (%s) (attempt %d/%d), retrying...", urlpath, e, attempt + 1, max_retries)
+                    time.sleep(0.5 * (attempt + 1))
+                    continue
+                raise KrakenAPIError(f"Request failed: {str(e)}") from e
 
     # --- Public Endpoints ---
 

@@ -540,15 +540,54 @@ def process_grid_pair(
                         pair, rung_id, txid, cancel_reason
                     )
                     client.cancel_order(txid)
-                    rung["state"] = "IDLE"
-                    rung["active_order_id"] = None
+                    # Check if there was any partial fill before cancellation
+                    vol_exec = order_info.get("vol_exec", Decimal("0"))
+                    if vol_exec >= ordermin:
+                        actual_price = order_info.get("price", Decimal(rung.get("last_buy_price", "0")))
+                        total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
+                        raw_sell_price = actual_price * total_markup
+                        sell_price = _round_decimal(raw_sell_price, pair_decimals, rounding=ROUND_HALF_UP)
+                        logger.info(
+                            "[%s Rung %s] Partial fill detected on cancelled buy (%s %s @ £%s). Transitioning to SELL_PLACED @ £%s",
+                            pair, rung_id, vol_exec, pair, actual_price, sell_price
+                        )
+                        sell_txid = client.place_limit_order(pair, "sell", vol_exec, sell_price, post_only=True)
+                        rung["state"] = "SELL_PLACED"
+                        rung["active_order_id"] = sell_txid
+                        rung["last_buy_price"] = str(actual_price)
+                        rung["last_buy_volume"] = str(vol_exec)
+                        rung["target_sell_price"] = str(sell_price)
+                        rung["applied_target_pct"] = str(target_pct)
+                        rung["order_placed_at"] = int(time.time())
+                    else:
+                        rung["state"] = "IDLE"
+                        rung["active_order_id"] = None
                     state_changed = True
                     store.save_state(state)
 
             elif status in ("canceled", "expired"):
-                logger.warning("[%s Rung %s] Buy order %s was %s. Resetting to IDLE.", pair, rung_id, txid, status)
-                rung["state"] = "IDLE"
-                rung["active_order_id"] = None
+                vol_exec = order_info.get("vol_exec", Decimal("0"))
+                if vol_exec >= ordermin:
+                    actual_price = order_info.get("price", Decimal(rung.get("last_buy_price", "0")))
+                    total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
+                    raw_sell_price = actual_price * total_markup
+                    sell_price = _round_decimal(raw_sell_price, pair_decimals, rounding=ROUND_HALF_UP)
+                    logger.info(
+                        "[%s Rung %s] Partial fill detected on %s buy (%s %s @ £%s). Transitioning to SELL_PLACED @ £%s",
+                        pair, rung_id, status, vol_exec, pair, actual_price, sell_price
+                    )
+                    sell_txid = client.place_limit_order(pair, "sell", vol_exec, sell_price, post_only=True)
+                    rung["state"] = "SELL_PLACED"
+                    rung["active_order_id"] = sell_txid
+                    rung["last_buy_price"] = str(actual_price)
+                    rung["last_buy_volume"] = str(vol_exec)
+                    rung["target_sell_price"] = str(sell_price)
+                    rung["applied_target_pct"] = str(target_pct)
+                    rung["order_placed_at"] = int(time.time())
+                else:
+                    logger.warning("[%s Rung %s] Buy order %s was %s. Resetting to IDLE.", pair, rung_id, txid, status)
+                    rung["state"] = "IDLE"
+                    rung["active_order_id"] = None
                 state_changed = True
                 store.save_state(state)
 
@@ -600,6 +639,16 @@ def process_grid_pair(
                     f"• Sold: {volume} {pair[:3]} @ £{sell_price}\n\n"
                     f"The rung has reset and will place a fresh buy order on the next iteration.",
                 )
+
+            elif status in ("canceled", "expired"):
+                logger.warning(
+                    "[%s Rung %s] Active Sell order %s was %s externally. Resetting rung to IDLE for auto-adoption.",
+                    pair, rung_id, txid, status
+                )
+                rung["state"] = "IDLE"
+                rung["active_order_id"] = None
+                state_changed = True
+                store.save_state(state)
 
     if state_changed:
         store.save_state(state)
