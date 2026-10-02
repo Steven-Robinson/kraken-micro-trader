@@ -64,6 +64,11 @@ RUNG_4_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_4_MAX_DRIFT_PERCENT", "7.5"))
 # Auto-resize threshold: if order capital is severely undersized (<60% target) and cash is free, refresh it
 UNDERSIZED_THRESHOLD_PERCENT = Decimal(os.getenv("UNDERSIZED_THRESHOLD_PERCENT", "0.60"))
 
+# Trend Velocity Guard: Pauses placing new buy orders if price is moving rapidly in one direction
+VELOCITY_FILTER_ENABLED = os.getenv("VELOCITY_FILTER_ENABLED", "true").lower() in ("true", "1", "yes")
+VELOCITY_LOOKBACK_HOURS = int(os.getenv("VELOCITY_LOOKBACK_HOURS", "3"))
+VELOCITY_MAX_CHANGE_PERCENT = Decimal(os.getenv("VELOCITY_MAX_CHANGE_PERCENT", "1.8"))
+
 # Estimated round-trip Maker fee (Kraken Pro: 0.25% buy + 0.25% sell = 0.50%)
 ROUND_TRIP_FEE_PERCENT = Decimal(os.getenv("ROUND_TRIP_FEE_PERCENT", "0.50"))
 

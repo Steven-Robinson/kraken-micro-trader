@@ -133,7 +133,11 @@ def display_pair_status(pair: str):
                 print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{r_buy} (-{r_disc}% dip) | Target: +{r_gain}%")
                 print(f"    Active Order:    {r_order}")
             else:
-                print(f"  • Rung {rid}:            {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
+                if rdata.get("velocity_paused"):
+                    roc = rdata.get("velocity_roc_pct", "0.0")
+                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}COOLING_DOWN{RESET} (Velocity {roc}%/3h > 1.8% threshold - waiting for market to stabilize)")
+                else:
+                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
     else:
         state_color = GREEN if "PLACED" in current_state else YELLOW
         print(f"  Strategy Mode:     {BOLD}LEGACY SINGLE-ORDER{RESET} (Auto-migrates to Grid upon Sell Fill)")

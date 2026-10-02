@@ -454,6 +454,66 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(res["trades_completed"], 1)
         self.assertGreater(Decimal(res["total_profit_gbp"]), Decimal("0.10"))
 
+    def test_velocity_guard_pauses_buy_placement_on_idle_rung(self):
+        """Verify Velocity Guard pauses placing new buy orders during a rapid price surge."""
+        state = initialize_grid_state("ETHGBP")
+        self.assertEqual(state["rungs"]["1"]["state"], "IDLE")
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2060.00"), "ask": Decimal("2061.00"), "last": Decimal("2060.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("50.00")}
+        self.mock_client.get_open_orders.return_value = {}
+
+        # 1. Rapid rally candles: 2000 -> 2060 (+3.0% > 1.8% threshold)
+        surge_candles = [
+            [1700000000, "2000.0", "2020.0", "1995.0", "2015.0", "2010.5", "10", 5],
+            [1700003600, "2015.0", "2040.0", "2010.0", "2038.0", "2025.5", "10", 5],
+            [1700007200, "2038.0", "2065.0", "2035.0", "2060.0", "2050.0", "10", 5],
+        ]
+        self.mock_client.get_ohlc.return_value = surge_candles
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Velocity Guard must be active; orders must NOT be placed
+        self.mock_client.place_limit_order.assert_not_called()
+        self.assertTrue(res["rungs"]["1"].get("velocity_paused"))
+        self.assertEqual(res["rungs"]["1"]["state"], "IDLE")
+
+        # 2. Market stabilizes: recent candles flatten (2058 -> 2060, +0.1%)
+        calm_candles = [
+            [1700000000, "2058.0", "2062.0", "2055.0", "2059.0", "2058.5", "10", 5],
+            [1700003600, "2059.0", "2063.0", "2056.0", "2060.0", "2059.5", "10", 5],
+            [1700007200, "2060.0", "2064.0", "2058.0", "2060.0", "2060.0", "10", 5],
+        ]
+        self.mock_client.get_ohlc.return_value = calm_candles
+        self.mock_client.place_limit_order.side_effect = ["TXID-BUY-R1", "TXID-BUY-R2"]
+
+        res2 = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Now that velocity slowed down, buy orders are placed!
+        self.assertEqual(res2["rungs"]["1"]["state"], "BUY_PLACED")
+        self.assertEqual(res2["rungs"]["1"]["active_order_id"], "TXID-BUY-R1")
+        self.assertFalse(res2["rungs"]["1"].get("velocity_paused"))
+
 
 if __name__ == "__main__":
     unittest.main()

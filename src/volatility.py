@@ -81,3 +81,77 @@ def compute_volatility_target(
     except Exception as e:
         logger.error("Failed to compute volatility target: %s. Using fallback %s%%", e, fallback_percent)
         return fallback_percent, {"error": str(e)}
+
+
+def check_market_velocity(
+    candles: list[list[Any]],
+    lookback_hours: int = 3,
+    threshold_percent: Decimal = Decimal("1.8"),
+) -> tuple[bool, Decimal, dict[str, Any]]:
+    """Check if price is rapidly moving in one direction over recent hours.
+
+    Compares current price with the price `lookback_hours` ago. If the
+    absolute percentage change exceeds `threshold_percent`, flags high velocity
+    so the bot can pause placing limit buys until the market stabilizes.
+
+    Args:
+        candles: Hourly OHLC candle array from Kraken get_ohlc(pair, interval=60).
+        lookback_hours: Number of recent 1-hour candles to evaluate (default 3h).
+        threshold_percent: Max allowed directional change % before triggering pause.
+
+    Returns:
+        tuple: (is_high_velocity: bool, roc_percent: Decimal, stats: dict)
+    """
+    if not candles or len(candles) < lookback_hours:
+        return False, Decimal("0.0"), {"reason": "insufficient_candles"}
+
+    try:
+        recent = candles[-lookback_hours:]
+        # Start price is the open price of the candle `lookback_hours` ago
+        start_price = Decimal(str(recent[0][1]))
+        # Current price is the latest close
+        current_price = Decimal(str(recent[-1][4]))
+
+        if start_price <= Decimal("0"):
+            return False, Decimal("0.0"), {"reason": "invalid_start_price"}
+
+        roc_percent = (((current_price - start_price) / start_price) * Decimal("100")).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        abs_roc = abs(roc_percent)
+
+        # Also check single-candle extreme flash volatility in the latest 1 hour
+        latest_candle = recent[-1]
+        latest_low = Decimal(str(latest_candle[3]))
+        latest_high = Decimal(str(latest_candle[2]))
+        latest_range_pct = Decimal("0")
+        if latest_low > 0:
+            latest_range_pct = (((latest_high - latest_low) / latest_low) * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+        # High velocity if multi-hour trend is steep OR current hourly bar is a flash wick (> 1.3x threshold)
+        is_high_velocity = abs_roc > threshold_percent or latest_range_pct > (threshold_percent * Decimal("1.3"))
+
+        stats = {
+            "start_price": str(start_price),
+            "current_price": str(current_price),
+            "lookback_hours": lookback_hours,
+            "roc_percent": str(roc_percent),
+            "latest_range_pct": str(latest_range_pct),
+            "threshold_percent": str(threshold_percent),
+            "is_high_velocity": is_high_velocity,
+        }
+
+        if is_high_velocity:
+            logger.info(
+                "Velocity Guard Triggered: Price moved %+.2f%% over %dh (threshold: %.2f%%, 1h range: %.2f%%)",
+                roc_percent, lookback_hours, threshold_percent, latest_range_pct
+            )
+
+        return is_high_velocity, roc_percent, stats
+
+    except Exception as e:
+        logger.error("Error computing market velocity: %s", e)
+        return False, Decimal("0.0"), {"error": str(e)}
+

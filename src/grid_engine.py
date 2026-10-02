@@ -33,10 +33,13 @@ from config import (
     RUNG_4_MAX_STALE_HOURS,
     RUNG_4_MIN_PAIR_CAPITAL_GBP,
     UNDERSIZED_THRESHOLD_PERCENT,
+    VELOCITY_FILTER_ENABLED,
+    VELOCITY_LOOKBACK_HOURS,
+    VELOCITY_MAX_CHANGE_PERCENT,
 )
 from kraken_client import KrakenClient
 from state_store import StateStore
-from volatility import compute_volatility_target
+from volatility import compute_volatility_target, check_market_velocity
 
 logger = logging.getLogger(__name__)
 
@@ -220,21 +223,23 @@ def process_grid_pair(
     truly_free_cash = max(Decimal("0"), total_cash - committed_buy_cash)
     available_cash = max(Decimal("0"), truly_free_cash - MIN_FEE_BUFFER_GBP)
 
-    # Optional dynamic volatility scaling for profit target
+    # Fetch recent candles for volatility targeting and velocity guard
     dynamic_markup = Decimal("0.0")
-    if DYNAMIC_TARGET_ENABLED:
+    candles = None
+    if DYNAMIC_TARGET_ENABLED or VELOCITY_FILTER_ENABLED:
         try:
             candles = client.get_ohlc(pair, interval=60)
-            dyn_pct, _ = compute_volatility_target(
-                candles,
-                fallback_percent=PROFIT_TARGET_PERCENT,
-                min_target=MIN_PROFIT_TARGET_PERCENT,
-                max_target=MAX_PROFIT_TARGET_PERCENT,
-            )
-            # Scaling bonus if market volatility is elevated
-            dynamic_markup = max(Decimal("0.0"), dyn_pct - PROFIT_TARGET_PERCENT)
+            if DYNAMIC_TARGET_ENABLED and candles:
+                dyn_pct, _ = compute_volatility_target(
+                    candles,
+                    fallback_percent=PROFIT_TARGET_PERCENT,
+                    min_target=MIN_PROFIT_TARGET_PERCENT,
+                    max_target=MAX_PROFIT_TARGET_PERCENT,
+                )
+                # Scaling bonus if market volatility is elevated
+                dynamic_markup = max(Decimal("0.0"), dyn_pct - PROFIT_TARGET_PERCENT)
         except Exception as e:
-            logger.debug("[%s] Dynamic target calculation fallback: %s", pair, e)
+            logger.debug("[%s] Candles or dynamic target calculation fallback: %s", pair, e)
 
     state_changed = False
 
@@ -394,6 +399,28 @@ def process_grid_pair(
         # 1. RUNG IDLE -> Submit Maker Limit Buy
         # -------------------------------------------------------------
         if rung_state == "IDLE":
+            # Check Velocity Guard: if price is moving rapidly in one direction, pause placing buys
+            if VELOCITY_FILTER_ENABLED and candles:
+                is_rapid, roc_pct, _ = check_market_velocity(
+                    candles,
+                    lookback_hours=VELOCITY_LOOKBACK_HOURS,
+                    threshold_percent=VELOCITY_MAX_CHANGE_PERCENT,
+                )
+                if is_rapid:
+                    logger.info(
+                        "[%s Rung %s] ⏳ Velocity Guard Active: Price moved %+.2f%% in last %dh (threshold: %.2f%%). Pausing buy placement until market stabilizes.",
+                        pair, rung_id, roc_pct, VELOCITY_LOOKBACK_HOURS, float(VELOCITY_MAX_CHANGE_PERCENT)
+                    )
+                    rung["velocity_paused"] = True
+                    rung["velocity_roc_pct"] = str(roc_pct)
+                    state_changed = True
+                    continue
+                else:
+                    if rung.get("velocity_paused"):
+                        rung["velocity_paused"] = False
+                        rung.pop("velocity_roc_pct", None)
+                        state_changed = True
+
             raw_buy_price = best_bid * (Decimal("1") - (discount_pct / Decimal("100")))
             buy_price = _round_decimal(raw_buy_price, pair_decimals, rounding=ROUND_HALF_UP)
 
