@@ -224,6 +224,47 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(res["rungs"]["1"]["state"], "BUY_PLACED")
         self.assertEqual(res["rungs"]["2"]["state"], "BUY_PLACED")
 
+    def test_auto_adopt_unmanaged_crypto(self):
+        """Verify unmanaged/orphaned crypto in wallet is automatically adopted into a Maker Limit Sell."""
+        state = initialize_grid_state("ETHGBP")
+        # Both rungs start IDLE
+        self.assertEqual(state["rungs"]["1"]["state"], "IDLE")
+
+        self.mock_client.get_ticker.return_value = {
+            "bid": Decimal("2050.00"),
+            "ask": Decimal("2051.00"),
+            "last": Decimal("2050.50"),
+        }
+        # Account holds 0.0147 ETH and £10 cash
+        self.mock_client.get_balance.return_value = {
+            "ZGBP": Decimal("10.00"),
+            "XETH": Decimal("0.0147"),
+        }
+        self.mock_client.get_open_orders.return_value = {}
+        self.mock_client.place_limit_order.return_value = "TXID-ADOPTED-SELL"
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Rung 1 should have adopted the 0.0147 ETH into SELL_PLACED
+        rungs = res["rungs"]
+        self.assertEqual(rungs["1"]["state"], "SELL_PLACED")
+        self.assertEqual(rungs["1"]["active_order_id"], "TXID-ADOPTED-SELL")
+        self.assertEqual(rungs["1"]["last_buy_volume"], "0.0147")
+        # Target sell price must be at least best ask
+        self.assertGreaterEqual(Decimal(rungs["1"]["target_sell_price"]), Decimal("2051.00"))
+        # An alert should have been sent
+        self.assertTrue(any("Auto-Adopted" in sub for sub, _ in self.alerts))
+
 
 if __name__ == "__main__":
     unittest.main()

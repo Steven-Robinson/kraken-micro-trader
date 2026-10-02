@@ -83,6 +83,18 @@ def initialize_grid_state(pair: str) -> dict[str, Any]:
     }
 
 
+def _get_base_asset_keys(pair: str) -> list[str]:
+    """Map trading pair to Kraken wallet asset keys."""
+    p = pair.upper()
+    if "ETH" in p:
+        return ["XETH", "ETH"]
+    if "SOL" in p:
+        return ["SOL"]
+    if "XBT" in p or "BTC" in p:
+        return ["XXBT", "XBT", "BTC"]
+    return [pair.replace("GBP", "").replace("ZGBP", "")]
+
+
 def process_grid_pair(
     pair: str,
     client: KrakenClient,
@@ -142,6 +154,109 @@ def process_grid_pair(
             logger.debug("[%s] Dynamic target calculation fallback: %s", pair, e)
 
     state_changed = False
+
+    # -------------------------------------------------------------
+    # 0. AUTO-ADOPTION / INVENTORY RECONCILIATION
+    # Detect unmanaged/orphaned crypto in wallet and place Limit Sell
+    # -------------------------------------------------------------
+    try:
+        held_crypto = Decimal("0")
+        for asset_key in _get_base_asset_keys(pair):
+            held_crypto += Decimal(str(balances.get(asset_key, "0")))
+
+        open_orders = client.get_open_orders()
+        committed_sell_volume = Decimal("0")
+        if isinstance(open_orders, dict):
+            for _, order in open_orders.items():
+                descr = order.get("descr", {})
+                order_pair = descr.get("pair", "")
+                is_match = (
+                    order_pair == pair
+                    or order_pair in (f"X{pair[:3]}ZGBP", f"{pair[:3]}GBP")
+                    or (pair.startswith("SOL") and "SOL" in order_pair)
+                    or (pair.startswith("ETH") and "ETH" in order_pair)
+                    or (pair.startswith("BTC") and ("XBT" in order_pair or "BTC" in order_pair))
+                )
+                if is_match and descr.get("type") == "sell":
+                    rem_vol = Decimal(str(order.get("vol", "0"))) - Decimal(str(order.get("vol_exec", "0")))
+                    committed_sell_volume += rem_vol
+
+        uncommitted_crypto = max(Decimal("0"), held_crypto - committed_sell_volume)
+
+        if uncommitted_crypto >= ordermin:
+            # Find an available rung to adopt this crypto into SELL_PLACED
+            target_rung_id = None
+            for cfg in DEFAULT_RUNGS_CONFIG:
+                r_id = cfg["rung_id"]
+                if rungs.get(r_id, {}).get("state") == "IDLE":
+                    target_rung_id = r_id
+                    break
+
+            if not target_rung_id:
+                for cfg in DEFAULT_RUNGS_CONFIG:
+                    r_id = cfg["rung_id"]
+                    if rungs.get(r_id, {}).get("state") == "BUY_PLACED":
+                        target_rung_id = r_id
+                        old_buy_txid = rungs[r_id].get("active_order_id")
+                        if old_buy_txid and not client.dry_run:
+                            try:
+                                client.cancel_order(old_buy_txid)
+                                logger.info("[%s Auto-Adopt] Cancelled buy order %s on Rung %s", pair, old_buy_txid, r_id)
+                            except Exception as e:
+                                logger.warning("[%s Auto-Adopt] Could not cancel buy %s: %s", pair, old_buy_txid, e)
+                        break
+
+            if target_rung_id:
+                target_rung = rungs.setdefault(target_rung_id, {})
+                last_buy = Decimal(str(target_rung.get("last_buy_price", "0")))
+                target_pct = Decimal(target_rung.get("target_pct", "1.00")) + dynamic_markup
+
+                best_ask = ticker.get("ask", best_bid)
+                tick_step = Decimal(10) ** -pair_decimals
+
+                if last_buy > Decimal("0"):
+                    total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
+                    raw_target = last_buy * total_markup
+                    target_sell_price = max(best_ask, _round_decimal(raw_target, pair_decimals, rounding=ROUND_HALF_UP))
+                else:
+                    target_sell_price = max(best_ask, best_bid + tick_step)
+
+                # Ensure post-only validity: limit sell must strictly exceed best_bid
+                if target_sell_price <= best_bid:
+                    target_sell_price = best_bid + tick_step
+
+                sell_volume = _round_decimal(uncommitted_crypto, lot_decimals, rounding=ROUND_DOWN)
+
+                if sell_volume >= ordermin:
+                    try:
+                        logger.info(
+                            "[%s Auto-Adopt] Adopting unmanaged %s %s into Rung %s. Submitting Limit Sell @ £%s",
+                            pair, sell_volume, pair, target_rung_id, target_sell_price
+                        )
+                        sell_txid = client.place_limit_order(pair, "sell", sell_volume, target_sell_price, post_only=True)
+                        target_rung["state"] = "SELL_PLACED"
+                        target_rung["active_order_id"] = sell_txid
+                        target_rung["last_buy_volume"] = str(sell_volume)
+                        if last_buy <= Decimal("0"):
+                            target_rung["last_buy_price"] = str(_round_decimal(target_sell_price / (Decimal("1") + (target_pct / Decimal("100"))), pair_decimals))
+                        target_rung["target_sell_price"] = str(target_sell_price)
+                        target_rung["applied_target_pct"] = str(target_pct)
+                        target_rung["order_placed_at"] = int(time.time())
+                        state_changed = True
+                        store.save_state(state)
+
+                        send_alert_fn(
+                            f"[Kraken Micro-Trader] 🔄 Auto-Adopted {sell_volume} {pair} @ £{target_sell_price}",
+                            f"Discovered {sell_volume} unmanaged {pair} in account!\n\n"
+                            f"• Auto-adopted into Rung {target_rung_id}\n"
+                            f"• Placed Maker Limit Sell @ £{target_sell_price}\n"
+                            f"• Order ID: {sell_txid}\n\n"
+                            f"This position is now actively working to harvest profit and unfreeze cash.",
+                        )
+                    except Exception as e:
+                        logger.error("[%s Auto-Adopt] Failed to place limit sell for unmanaged crypto: %s", pair, e)
+    except Exception as e:
+        logger.warning("[%s Auto-Adopt] Error during reconciliation check: %s", pair, e)
 
     for cfg in DEFAULT_RUNGS_CONFIG:
         rung_id = cfg["rung_id"]
