@@ -21,6 +21,11 @@ from config import (
     MIN_PROFIT_TARGET_PERCENT,
     PROFIT_TARGET_PERCENT,
     ROUND_TRIP_FEE_PERCENT,
+    RUNG_1_MAX_DRIFT_PERCENT,
+    RUNG_1_MAX_STALE_HOURS,
+    RUNG_2_MAX_DRIFT_PERCENT,
+    RUNG_2_MAX_STALE_HOURS,
+    UNDERSIZED_THRESHOLD_PERCENT,
 )
 from kraken_client import KrakenClient
 from state_store import StateStore
@@ -362,8 +367,43 @@ def process_grid_pair(
 
             elif status == "open":
                 order_age_hours = (time.time() - float(rung.get("order_placed_at", time.time()))) / 3600
-                if order_age_hours > float(MAX_STALE_HOURS):
-                    logger.info("[%s Rung %s] Buy order %s stale (%.1f h). Canceling to re-quote.", pair, rung_id, txid, order_age_hours)
+                order_buy_price = Decimal(str(rung.get("last_buy_price", "0")))
+                order_vol = Decimal(str(rung.get("last_buy_volume", "0")))
+                order_capital = order_buy_price * order_vol
+
+                # 1. Asymmetric Stale Timeout: 4h for Rung 1 (quick scalp), 24h for Rung 2 (patient dip)
+                stale_threshold = RUNG_1_MAX_STALE_HOURS if rung_id == "1" else RUNG_2_MAX_STALE_HOURS
+                is_stale = order_age_hours > float(stale_threshold)
+
+                # 2. Price Drift Detection: Has market rallied away above our limit buy?
+                drift_threshold = RUNG_1_MAX_DRIFT_PERCENT if rung_id == "1" else RUNG_2_MAX_DRIFT_PERCENT
+                has_drifted = False
+                drift_pct = Decimal("0")
+                if order_buy_price > Decimal("0") and best_bid > Decimal("0"):
+                    drift_pct = ((best_bid - order_buy_price) / order_buy_price) * Decimal("100")
+                    if drift_pct > drift_threshold:
+                        has_drifted = True
+
+                # 3. Capital Undersize Detection: Was order starved of capital (<60% target) but cash is now free?
+                is_undersized = False
+                if rung_capital > Decimal("0"):
+                    capital_ratio = order_capital / rung_capital
+                    if capital_ratio < UNDERSIZED_THRESHOLD_PERCENT and available_cash >= (rung_capital * Decimal("0.80")):
+                        is_undersized = True
+
+                cancel_reason = None
+                if is_stale:
+                    cancel_reason = f"Stale ({order_age_hours:.1f}h > {stale_threshold}h limit)"
+                elif has_drifted:
+                    cancel_reason = f"Price drift (Market +{drift_pct:.2f}% above order > {drift_threshold}% limit)"
+                elif is_undersized:
+                    cancel_reason = f"Undersized capital (£{order_capital:.2f} vs target £{rung_capital:.2f}) and cash is now available"
+
+                if cancel_reason:
+                    logger.info(
+                        "[%s Rung %s] Auto-rebalancing buy order %s: %s. Canceling to re-quote at market.",
+                        pair, rung_id, txid, cancel_reason
+                    )
                     client.cancel_order(txid)
                     rung["state"] = "IDLE"
                     rung["active_order_id"] = None

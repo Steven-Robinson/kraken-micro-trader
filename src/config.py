@@ -44,7 +44,16 @@ MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "3.0"
 BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "0.2"))
 
 # Hours before an unfilled limit buy order is considered stale and re-evaluated
-MAX_STALE_HOURS = Decimal(os.getenv("MAX_STALE_HOURS", "24"))
+RUNG_1_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_1_MAX_STALE_HOURS", "4.0"))
+RUNG_2_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_2_MAX_STALE_HOURS", "24.0"))
+MAX_STALE_HOURS = RUNG_2_MAX_STALE_HOURS  # Backwards compatibility fallback
+
+# Price drift threshold: if market rallies above limit buy order, cancel and re-quote to follow the trend
+RUNG_1_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_1_MAX_DRIFT_PERCENT", "1.5"))
+RUNG_2_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_2_MAX_DRIFT_PERCENT", "3.5"))
+
+# Auto-resize threshold: if order capital is severely undersized (<60% target) and cash is free, refresh it
+UNDERSIZED_THRESHOLD_PERCENT = Decimal(os.getenv("UNDERSIZED_THRESHOLD_PERCENT", "0.60"))
 
 # Estimated round-trip Maker fee (Kraken Pro: 0.25% buy + 0.25% sell = 0.50%)
 ROUND_TRIP_FEE_PERCENT = Decimal(os.getenv("ROUND_TRIP_FEE_PERCENT", "0.50"))

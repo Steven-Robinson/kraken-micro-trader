@@ -191,8 +191,7 @@ class TestGridEngine(unittest.TestCase):
             "target_pct": "1.00",
             "last_buy_price": "1988.00",
             "last_buy_volume": "0.0062",
-            "target_sell_price": "0.0",
-            "order_placed_at": Decimal("1790865385"),
+            "order_placed_at": Decimal(str(int(time.time() - 1800))),
         }
         state["rungs"]["2"] = {
             "state": "BUY_PLACED",
@@ -202,7 +201,7 @@ class TestGridEngine(unittest.TestCase):
             "last_buy_price": "1972.00",
             "last_buy_volume": "0.0063",
             "target_sell_price": "0.0",
-            "order_placed_at": Decimal("1790865385"),
+            "order_placed_at": Decimal(str(int(time.time() - 1800))),
         }
 
         self.mock_client.get_ticker.return_value = {"bid": Decimal("1995.00"), "ask": Decimal("1996.00"), "last": Decimal("1995.00")}
@@ -264,6 +263,75 @@ class TestGridEngine(unittest.TestCase):
         self.assertGreaterEqual(Decimal(rungs["1"]["target_sell_price"]), Decimal("2051.00"))
         # An alert should have been sent
         self.assertTrue(any("Auto-Adopted" in sub for sub, _ in self.alerts))
+
+    def test_rung_1_auto_cancels_on_upward_drift(self):
+        """Verify Rung 1 buy order cancels when market drifts > 1.5% above it."""
+        state = initialize_grid_state("ETHGBP")
+        state["rungs"]["1"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-BUY-R1",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "2000.00",
+            "last_buy_volume": "0.0062",
+            "target_sell_price": "0.0",
+            "order_placed_at": Decimal(str(int(time.time() - 1800))),  # only 30m old
+        }
+        # Market has rallied to £2040.00 (+2.0% above £2000.00 limit buy > 1.5% limit)
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2040.00"), "ask": Decimal("2041.00"), "last": Decimal("2040.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
+        self.mock_client.query_order.return_value = {"status": "open"}
+        self.mock_client.get_open_orders.return_value = {}
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Order should have been cancelled due to drift
+        self.mock_client.cancel_order.assert_called_with("TXID-BUY-R1")
+
+    def test_undersized_order_auto_cancels_to_resize(self):
+        """Verify undersized order (<60% target) cancels when cash is now available."""
+        state = initialize_grid_state("ETHGBP")
+        # Target per rung is £12.50 (50% of £25.00). An order with £2.00 is <60% target.
+        state["rungs"]["1"] = {
+            "state": "BUY_PLACED",
+            "active_order_id": "TXID-UNDERSIZED",
+            "discount_pct": "0.60",
+            "target_pct": "1.00",
+            "last_buy_price": "2000.00",
+            "last_buy_volume": "0.0010",  # 2000 * 0.0010 = £2.00 (undersized!)
+            "target_sell_price": "0.0",
+            "order_placed_at": Decimal(str(int(time.time() - 600))),
+        }
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2005.00"), "ask": Decimal("2006.00"), "last": Decimal("2005.50")}
+        # Lots of cash available now (£50.00)
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("50.00")}
+        self.mock_client.query_order.return_value = {"status": "open"}
+        self.mock_client.get_open_orders.return_value = {}
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Order should be cancelled to re-deploy at full size
+        self.mock_client.cancel_order.assert_called_with("TXID-UNDERSIZED")
 
 
 if __name__ == "__main__":
