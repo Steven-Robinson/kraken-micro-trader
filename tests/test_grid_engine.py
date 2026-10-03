@@ -63,13 +63,13 @@ class TestGridEngine(unittest.TestCase):
         rungs = res["rungs"]
         self.assertEqual(rungs["1"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["1"]["active_order_id"], "TXID-BUY-R1")
-        # Rung 1 buy price: 2000 * (1 - 0.006) = 1988.00
-        self.assertEqual(rungs["1"]["last_buy_price"], "1988.00")
+        # Rung 1 buy price: 2000 * (1 - 0.008) = 1984.00
+        self.assertEqual(rungs["1"]["last_buy_price"], "1984.00")
 
         self.assertEqual(rungs["2"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["2"]["active_order_id"], "TXID-BUY-R2")
-        # Rung 2 buy price: 2000 * (1 - 0.014) = 1972.00
-        self.assertEqual(rungs["2"]["last_buy_price"], "1972.00")
+        # Rung 2 buy price: 2000 * (1 - 0.024) = 1952.00
+        self.assertEqual(rungs["2"]["last_buy_price"], "1952.00")
 
         self.assertTrue(self.mock_store.save_state.called)
 

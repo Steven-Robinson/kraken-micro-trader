@@ -57,16 +57,16 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("0.60"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.80"),
+                "target_pct": Decimal("0.80"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("1.40"),
-                "target_pct": Decimal("1.20"),
+                "discount_pct": Decimal("2.40"),
+                "target_pct": Decimal("1.00"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
@@ -76,16 +76,16 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.40"),
-                "discount_pct": Decimal("0.60"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.80"),
+                "target_pct": Decimal("0.80"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.35"),
-                "discount_pct": Decimal("1.50"),
-                "target_pct": Decimal("1.30"),
+                "discount_pct": Decimal("1.80"),
+                "target_pct": Decimal("1.00"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
@@ -93,7 +93,7 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
                 "rung_id": "3",
                 "weight": Decimal("0.25"),
                 "discount_pct": Decimal("2.80"),
-                "target_pct": Decimal("1.80"),
+                "target_pct": Decimal("1.20"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
@@ -103,16 +103,16 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("0.60"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.80"),
+                "target_pct": Decimal("0.80"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("1.50"),
-                "target_pct": Decimal("1.30"),
+                "discount_pct": Decimal("1.80"),
+                "target_pct": Decimal("1.00"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
@@ -120,7 +120,7 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
                 "rung_id": "3",
                 "weight": Decimal("0.20"),
                 "discount_pct": Decimal("3.00"),
-                "target_pct": Decimal("2.00"),
+                "target_pct": Decimal("1.20"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
@@ -128,7 +128,7 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
                 "rung_id": "4",
                 "weight": Decimal("0.20"),
                 "discount_pct": Decimal("5.00"),
-                "target_pct": Decimal("3.00"),
+                "target_pct": Decimal("1.50"),
                 "stale_hours": RUNG_4_MAX_STALE_HOURS,
                 "drift_pct": RUNG_4_MAX_DRIFT_PERCENT,
             },
@@ -164,7 +164,7 @@ def initialize_grid_state(pair: str, pair_capital: Decimal = Decimal("25.00")) -
         "bot_id": f"{pair}-PINGPONG",
         "version": "grid_v2",
         "trades_completed": 0,
-        "total_realized_profit_gbp": "0.0000",
+        "total_realized_profit_gbp": "0.00",
         "rungs": rungs,
     }
 
@@ -611,16 +611,16 @@ def process_grid_pair(
 
                 gross_profit = (sell_price - buy_price) * volume
                 fees = (buy_price * volume + sell_price * volume) * (ROUND_TRIP_FEE_PERCENT / Decimal("200"))
-                net_profit = (gross_profit - fees).quantize(Decimal("0.0001"))
+                net_profit = (gross_profit - fees).quantize(Decimal("0.01"))
 
                 total_trades = state.get("trades_completed", 0) + 1
-                total_profit = (Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit).quantize(Decimal("0.0001"))
+                total_profit = (Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit).quantize(Decimal("0.01"))
 
                 state["trades_completed"] = total_trades
-                state["total_realized_profit_gbp"] = str(total_profit)
+                state["total_realized_profit_gbp"] = f"{total_profit:.2f}"
 
                 logger.info(
-                    "🎉 [%s Rung %s PROFIT BANKED] Net: +£%s | Total: +£%s (%d fills)",
+                    "🎉 [%s Rung %s PROFIT BANKED] Net: +£%.2f | Total: +£%.2f (%d fills)",
                     pair, rung_id, net_profit, total_profit, total_trades
                 )
 
@@ -634,9 +634,9 @@ def process_grid_pair(
                     f"[Kraken Micro-Trader] 💰 Profit Banked on {pair} (+£{net_profit:.2f})",
                     f"Rung {rung_id} on {pair} hit its limit sell target!\n\n"
                     f"• Pair: {pair}\n"
-                    f"• Net Profit Realized: +£{net_profit:.4f}\n"
-                    f"• Lifetime Pair Profit: +£{total_profit:.4f} across {total_trades} cycles\n"
-                    f"• Sold: {volume} {pair[:3]} @ £{sell_price}\n\n"
+                    f"• Net Profit Realized: +£{net_profit:.2f}\n"
+                    f"• Lifetime Pair Profit: +£{total_profit:.2f} across {total_trades} cycles\n"
+                    f"• Sold: {volume} {pair[:3]} @ £{sell_price:.2f}\n\n"
                     f"The rung has reset and will place a fresh buy order on the next iteration.",
                 )
 

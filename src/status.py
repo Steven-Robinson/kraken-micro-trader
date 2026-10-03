@@ -126,16 +126,19 @@ def display_pair_status(pair: str):
                 vol = Decimal(r_vol)
                 gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
                 net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
-                print(f"  • Rung {rid}:            {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{r_buy})")
-                print(f"    Target Sell:     £{r_target} | Pending Profit: {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET}")
+                print(f"  • Rung {rid}:            {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{entry:.2f})")
+                print(f"    Target Sell:     £{target:.2f} | Pending Profit: {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET}")
                 print(f"    Active Order:    {r_order}")
             elif r_state == "BUY_PLACED":
-                print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{r_buy} (-{r_disc}% dip) | Target: +{r_gain}%")
+                entry = Decimal(r_buy)
+                disc = Decimal(r_disc)
+                gain = Decimal(r_gain)
+                print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{entry:.2f} (-{disc:.2f}% dip) | Target: +{gain:.2f}%")
                 print(f"    Active Order:    {r_order}")
             else:
                 if rdata.get("velocity_paused"):
-                    roc = rdata.get("velocity_roc_pct", "0.0")
-                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}COOLING_DOWN{RESET} (Velocity {roc}%/3h > 1.8% threshold - waiting for market to stabilize)")
+                    roc = Decimal(str(rdata.get("velocity_roc_pct", "0.0")))
+                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}COOLING_DOWN{RESET} (Velocity {roc:.2f}%/3h > 1.80% threshold - waiting for market to stabilize)")
                 else:
                     print(f"  • Rung {rid}:            {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
     else:
@@ -151,19 +154,20 @@ def display_pair_status(pair: str):
             net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
             print(f"  Cycle Progress:    {BOLD}Phase 2/2 (Holding {pair[:3]}, Limit Sell Active){RESET}")
             print(f"  Active Sell Order: {active_order}")
-            print(f"  Entry Buy Price:   £{last_buy} ({last_vol} {pair[:3]})")
-            print(f"  Target Sell Price: £{target_sell}")
+            print(f"  Entry Buy Price:   £{entry:.2f} ({last_vol} {pair[:3]})")
+            print(f"  Target Sell Price: £{target:.2f}")
             print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
         elif current_state == "BUY_PLACED":
+            entry = Decimal(last_buy)
             print(f"  Cycle Progress:    {BOLD}Phase 1/2 (Holding Cash, Limit Buy Active){RESET}")
             print(f"  Active Buy Order:  {active_order}")
-            print(f"  Target Buy Price:  £{last_buy} ({last_vol} {pair[:3]})")
+            print(f"  Target Buy Price:  £{entry:.2f} ({last_vol} {pair[:3]})")
         else:
             print(f"  Active Order ID:   {active_order}")
 
     print(f"  Completed Cycles:  {BOLD}{trades}{RESET}")
     profit_color = GREEN if profit >= 0 else "\033[91m"
-    print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:.4f}{RESET}")
+    print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:.2f}{RESET}")
 
     # Fetch live 24h market volatility for transparency
     try:
@@ -172,8 +176,10 @@ def display_pair_status(pair: str):
         client = KrakenClient()
         candles = client.get_ohlc(pair, interval=60)
         target_pct, stats = compute_volatility_target(candles)
-        print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{stats.get('low_24h', '0')} - £{stats.get('high_24h', '0')})")
-        print(f"  Dynamic Target:    {BOLD}{GREEN}+{target_pct}%{RESET} (Range: 0.8% - 3.0%)")
+        low_p = Decimal(str(stats.get('low_24h', '0')))
+        high_p = Decimal(str(stats.get('high_24h', '0')))
+        print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{low_p:.2f} - £{high_p:.2f})")
+        print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: 0.80% - 1.20%)")
     except Exception:
         pass
 
@@ -219,7 +225,7 @@ def display_status():
         print(f"{BOLD}{CYAN}============================================================{RESET}")
         print(f"  Total Cycles:      {BOLD}{total_all_trades}{RESET}")
         profit_color = GREEN if total_all_profit >= 0 else "\033[91m"
-        print(f"  Realized Profit:   {BOLD}{profit_color}+£{total_all_profit:.4f}{RESET}")
+        print(f"  Realized Profit:   {BOLD}{profit_color}+£{total_all_profit:.2f}{RESET}")
 
     print(f"{BOLD}{CYAN}============================================================{RESET}\n")
 

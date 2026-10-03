@@ -33,12 +33,12 @@ MIN_FEE_BUFFER_GBP = Decimal(os.getenv("MIN_FEE_BUFFER_GBP", "2.00"))  # Minimum
 FEE_BUFFER_PERCENT = Decimal(os.getenv("FEE_BUFFER_PERCENT", "3.0"))   # % buffer on larger balances
 
 # Target gross profit percentage per round trip (static baseline / fallback)
-PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "1.5"))
+PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "0.8"))
 
 # Dynamic ATR Volatility Engine
 DYNAMIC_TARGET_ENABLED = os.getenv("DYNAMIC_TARGET_ENABLED", "true").lower() in ("true", "1", "yes")
 MIN_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MIN_PROFIT_TARGET_PERCENT", "0.8"))
-MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "3.0"))
+MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "1.2"))
 
 # Discount below current market price for limit buy orders (0.1% - 0.3% ensures Maker status)
 BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "0.2"))

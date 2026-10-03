@@ -14,11 +14,11 @@ logger.setLevel(logging.INFO)
 
 def compute_volatility_target(
     candles: list[list[Any]],
-    fallback_percent: Decimal = Decimal("1.5"),
+    fallback_percent: Decimal = Decimal("0.8"),
     spread_ratio: Decimal = Decimal("0.50"),
     capture_ratio: Decimal = Decimal("0.75"),
     min_target: Decimal = Decimal("0.8"),
-    max_target: Decimal = Decimal("3.0"),
+    max_target: Decimal = Decimal("1.2"),
 ) -> tuple[Decimal, dict[str, Any]]:
     """Compute dynamic profit target from recent 24-hour hourly candlestick data.
 

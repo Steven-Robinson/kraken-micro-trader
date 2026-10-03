@@ -499,9 +499,9 @@ def _handle_sell_placed(
         net_profit = gross_profit - fees
 
         total_trades = state.get("trades_completed", 0) + 1
-        total_profit = Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit
+        total_profit = (Decimal(state.get("total_realized_profit_gbp", "0.0")) + net_profit).quantize(Decimal("0.01"))
 
-        logger.info("[%s] >>> CYCLE COMPLETE! Net Profit: +£%s (Total Realized: £%s across %d trades) <<<", pair, net_profit, total_profit, total_trades)
+        logger.info("[%s] >>> CYCLE COMPLETE! Net Profit: +£%.2f (Total Realized: £%.2f across %d trades) <<<", pair, net_profit, total_profit, total_trades)
 
         # Update portfolio metadata with fresh cash after sell fill so it's not confused with a bank deposit
         try:
@@ -518,17 +518,17 @@ def _handle_sell_placed(
         logger.info("[%s] Upgrading pair to 2-Rung Micro-Grid v2 after profitable cycle completion.", pair)
         grid_state = initialize_grid_state(pair)
         grid_state["trades_completed"] = total_trades
-        grid_state["total_realized_profit_gbp"] = str(total_profit)
+        grid_state["total_realized_profit_gbp"] = f"{total_profit:.2f}"
         store.save_state(grid_state)
 
         send_alert(
             f"[Kraken Micro-Trader] Profit Locked In on {pair}! (+£{net_profit:.2f})",
             f"Your Limit Sell order on Kraken filled successfully! 🚀\n\n"
             f"• Pair: {pair}\n"
-            f"• Sold: {volume} {pair} @ £{sell_price}\n"
-            f"• Entry Price: £{buy_price}\n"
-            f"• Net Profit (After Fees): +£{net_profit:.4f}\n"
-            f"• Total Realized Profit to Date: £{total_profit:.4f} across {total_trades} trade(s)\n\n"
+            f"• Sold: {volume} {pair} @ £{sell_price:.2f}\n"
+            f"• Entry Price: £{buy_price:.2f}\n"
+            f"• Net Profit (After Fees): +£{net_profit:.2f}\n"
+            f"• Total Realized Profit to Date: £{total_profit:.2f} across {total_trades} trade(s)\n\n"
             f"Next Action: Pair successfully upgraded to 2-Rung Micro-Grid! Staggered buy rungs will deploy on next iteration.",
         )
 
