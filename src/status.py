@@ -126,14 +126,14 @@ def display_pair_status(pair: str):
                 vol = Decimal(r_vol)
                 gain_pct = ((target - entry) / entry * 100) if entry > 0 else Decimal(0)
                 net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
-                print(f"  • Rung {rid}:            {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{entry:.2f})")
-                print(f"    Target Sell:     £{target:.2f} | Pending Profit: {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET}")
+                print(f"  • Rung {rid}:            {BOLD}{r_color}SELL_PLACED{RESET} (Holding {r_vol} {pair[:3]} @ £{entry:,.2f})")
+                print(f"    Target Sell:     £{target:,.2f} | Pending Profit: {BOLD}{GREEN}+£{net_pending:,.2f} (+{gain_pct:.2f}%){RESET}")
                 print(f"    Active Order:    {r_order}")
             elif r_state == "BUY_PLACED":
                 entry = Decimal(r_buy)
                 disc = Decimal(r_disc)
                 gain = Decimal(r_gain)
-                print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{entry:.2f} (-{disc:.2f}% dip) | Target: +{gain:.2f}%")
+                print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{entry:,.2f} (-{disc:.2f}% dip) | Target: +{gain:.2f}%")
                 print(f"    Active Order:    {r_order}")
             else:
                 if rdata.get("velocity_paused"):
@@ -154,20 +154,20 @@ def display_pair_status(pair: str):
             net_pending = ((target - entry) * vol) - ((entry * vol + target * vol) * Decimal("0.0025"))
             print(f"  Cycle Progress:    {BOLD}Phase 2/2 (Holding {pair[:3]}, Limit Sell Active){RESET}")
             print(f"  Active Sell Order: {active_order}")
-            print(f"  Entry Buy Price:   £{entry:.2f} ({last_vol} {pair[:3]})")
-            print(f"  Target Sell Price: £{target:.2f}")
-            print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
+            print(f"  Entry Buy Price:   £{entry:,.2f} ({last_vol} {pair[:3]})")
+            print(f"  Target Sell Price: £{target:,.2f}")
+            print(f"  Pending Profit:    {BOLD}{GREEN}+£{net_pending:,.2f} (+{gain_pct:.2f}%){RESET} (locks in on fill)")
         elif current_state == "BUY_PLACED":
             entry = Decimal(last_buy)
             print(f"  Cycle Progress:    {BOLD}Phase 1/2 (Holding Cash, Limit Buy Active){RESET}")
             print(f"  Active Buy Order:  {active_order}")
-            print(f"  Target Buy Price:  £{entry:.2f} ({last_vol} {pair[:3]})")
+            print(f"  Target Buy Price:  £{entry:,.2f} ({last_vol} {pair[:3]})")
         else:
             print(f"  Active Order ID:   {active_order}")
 
     print(f"  Completed Cycles:  {BOLD}{trades}{RESET}")
     profit_color = GREEN if profit >= 0 else "\033[91m"
-    print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:.2f}{RESET}")
+    print(f"  Realized Profit:   {BOLD}{profit_color}+£{profit:,.2f}{RESET}")
 
     # Fetch live 24h market volatility for transparency
     try:
@@ -178,7 +178,7 @@ def display_pair_status(pair: str):
         target_pct, stats = compute_volatility_target(candles)
         low_p = Decimal(str(stats.get('low_24h', '0')))
         high_p = Decimal(str(stats.get('high_24h', '0')))
-        print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{low_p:.2f} - £{high_p:.2f})")
+        print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{low_p:,.2f} - £{high_p:,.2f})")
         print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: 0.80% - 1.20%)")
     except Exception:
         pass
@@ -205,9 +205,9 @@ def display_status():
         fee_buffer = max(Decimal("2.00"), equity * Decimal("0.03"))
         tradeable = max(Decimal("0.0"), equity - fee_buffer)
         per_pair = tradeable / Decimal(len(TRADING_PAIRS))
-        print(f"  Total Portfolio:   {BOLD}£{equity:.2f}{RESET} (Free Cash: £{cash:.2f})")
-        print(f"  Fee Buffer Held:   {BOLD}£{fee_buffer:.2f}{RESET} (Permanent 3% / min £2.00 Safety Reserve)")
-        print(f"  Tradeable Pool:    {BOLD}£{tradeable:.2f}{RESET} (£{per_pair:.2f}/pair across {len(TRADING_PAIRS)} pairs)")
+        print(f"  Total Portfolio:   {BOLD}£{equity:,.2f}{RESET} (Free Cash: £{cash:,.2f})")
+        print(f"  Fee Buffer Held:   {BOLD}£{fee_buffer:,.2f}{RESET} (Permanent 3% / min £2.00 Safety Reserve)")
+        print(f"  Tradeable Pool:    {BOLD}£{tradeable:,.2f}{RESET} (£{per_pair:,.2f}/pair across {len(TRADING_PAIRS)} pairs)")
 
     # Ping-Pong / Micro-Grid Pair Cards
     total_all_trades = 0
@@ -225,7 +225,7 @@ def display_status():
         print(f"{BOLD}{CYAN}============================================================{RESET}")
         print(f"  Total Cycles:      {BOLD}{total_all_trades}{RESET}")
         profit_color = GREEN if total_all_profit >= 0 else "\033[91m"
-        print(f"  Realized Profit:   {BOLD}{profit_color}+£{total_all_profit:.2f}{RESET}")
+        print(f"  Realized Profit:   {BOLD}{profit_color}+£{total_all_profit:,.2f}{RESET}")
 
     print(f"{BOLD}{CYAN}============================================================{RESET}\n")
 
