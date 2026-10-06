@@ -29,15 +29,21 @@ variable "allocated_capital_gbp" {
 }
 
 variable "profit_target_percent" {
-  description = "Gross target percentage profit per cycle (e.g. 0.8)"
+  description = "Gross target percentage profit per cycle (e.g. 0.4)"
   type        = string
-  default     = "0.8"
+  default     = "0.4"
 }
 
 variable "buy_discount_percent" {
   description = "Discount below best bid for limit buys to guarantee Maker status"
   type        = string
   default     = "0.2"
+}
+
+variable "post_fill_cooldown_minutes" {
+  description = "Minutes to wait after a sell fill before placing the next buy order"
+  type        = string
+  default     = "6"
 }
 
 variable "dry_run" {
@@ -67,13 +73,13 @@ variable "dynamic_target_enabled" {
 variable "min_profit_target_percent" {
   description = "Minimum allowed profit target floor (protects fee efficiency)"
   type        = string
-  default     = "0.8"
+  default     = "0.35"
 }
 
 variable "max_profit_target_percent" {
   description = "Maximum allowed profit target ceiling (avoids stranded orders)"
   type        = string
-  default     = "1.2"
+  default     = "0.8"
 }
 
 variable "dynamic_capital_enabled" {

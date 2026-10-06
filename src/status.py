@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 # Ensure src/ is on python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -136,9 +137,16 @@ def display_pair_status(pair: str):
                 print(f"  • Rung {rid}:            {BOLD}{r_color}BUY_PLACED{RESET} @ £{entry:,.2f} (-{disc:.2f}% dip) | Target: +{gain:.2f}%")
                 print(f"    Active Order:    {r_order}")
             else:
-                if rdata.get("velocity_paused"):
+                cooldown_until = int(rdata.get("cooldown_until", 0))
+                now_ts = int(time.time())
+                if now_ts < cooldown_until:
+                    rem_sec = cooldown_until - now_ts
+                    rem_min = (rem_sec + 59) // 60
+                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}POST_PROFIT_COOLDOWN{RESET} ({rem_sec}s / ~{rem_min}m remaining to let price settle)")
+                elif rdata.get("velocity_paused"):
                     roc = Decimal(str(rdata.get("velocity_roc_pct", "0.0")))
-                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}COOLING_DOWN{RESET} (Velocity {roc:.2f}%/3h > 1.80% threshold - waiting for market to stabilize)")
+                    vtype = rdata.get("velocity_type", "HIGH_VELOCITY")
+                    print(f"  • Rung {rid}:            {BOLD}{YELLOW}VELOCITY_PAUSED{RESET} ({vtype}: {roc:+.2f}% change - waiting for market to stabilize)")
                 else:
                     print(f"  • Rung {rid}:            {BOLD}{YELLOW}IDLE{RESET} (Queued to deploy buy order)")
     else:
@@ -179,7 +187,7 @@ def display_pair_status(pair: str):
         low_p = Decimal(str(stats.get('low_24h', '0')))
         high_p = Decimal(str(stats.get('high_24h', '0')))
         print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{low_p:,.2f} - £{high_p:,.2f})")
-        print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: 0.80% - 1.20%)")
+        print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: 0.35% - 0.80%)")
     except Exception:
         pass
 

@@ -63,13 +63,13 @@ class TestGridEngine(unittest.TestCase):
         rungs = res["rungs"]
         self.assertEqual(rungs["1"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["1"]["active_order_id"], "TXID-BUY-R1")
-        # Rung 1 buy price: 2000 * (1 - 0.008) = 1984.00
-        self.assertEqual(rungs["1"]["last_buy_price"], "1984.00")
+        # Rung 1 buy price: 2000 * (1 - 0.003) = 1994.00
+        self.assertEqual(rungs["1"]["last_buy_price"], "1994.00")
 
         self.assertEqual(rungs["2"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["2"]["active_order_id"], "TXID-BUY-R2")
-        # Rung 2 buy price: 2000 * (1 - 0.024) = 1952.00
-        self.assertEqual(rungs["2"]["last_buy_price"], "1952.00")
+        # Rung 2 buy price: 2000 * (1 - 0.009) = 1982.00
+        self.assertEqual(rungs["2"]["last_buy_price"], "1982.00")
 
         self.assertTrue(self.mock_store.save_state.called)
 
@@ -125,8 +125,8 @@ class TestGridEngine(unittest.TestCase):
         # Rung 1 should now be SELL_PLACED
         self.assertEqual(rungs["1"]["state"], "SELL_PLACED")
         self.assertEqual(rungs["1"]["active_order_id"], "TXID-SELL-R1")
-        # Target sell price markup: 1988 * (1 + (1.0% target + 0.5% fee)) = 1988 * 1.015 = 2017.82
-        self.assertEqual(rungs["1"]["target_sell_price"], "2017.82")
+        # Target sell price markup: 1988 * (1 + (0.40% target + 0.5% fee)) = 1988 * 1.009 = 2005.89
+        self.assertEqual(rungs["1"]["target_sell_price"], "2005.89")
 
         # Rung 2 should remain BUY_PLACED
         self.assertEqual(rungs["2"]["state"], "BUY_PLACED")
@@ -348,7 +348,7 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(cfg_3[2]["rung_id"], "3")
         self.assertEqual(cfg_3[0]["weight"] + cfg_3[1]["weight"] + cfg_3[2]["weight"], Decimal("1.00"))
         # Rung 3 targets a deeper dip
-        self.assertEqual(cfg_3[2]["discount_pct"], Decimal("2.80"))
+        self.assertEqual(cfg_3[2]["discount_pct"], Decimal("1.50"))
 
         # 3. £80+ -> 4 rungs
         cfg_4 = get_rungs_config(Decimal("100.00"))
@@ -410,8 +410,8 @@ class TestGridEngine(unittest.TestCase):
         self.assertIn("3", rungs)
         self.assertEqual(rungs["3"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["3"]["active_order_id"], "TXID-BUY-R3")
-        # Rung 3 discount is 2.80%: 2000 * (1 - 0.028) = 1944.00
-        self.assertEqual(rungs["3"]["last_buy_price"], "1944.00")
+        # Rung 3 discount is 1.50%: 2000 * (1 - 0.015) = 1970.00
+        self.assertEqual(rungs["3"]["last_buy_price"], "1970.00")
 
     def test_dynamic_scaling_preserves_sell_order_when_capital_downscales(self):
         """Verify that if capital drops, a decommissioned rung in SELL_PLACED is preserved until fill."""
@@ -590,6 +590,72 @@ class TestGridEngine(unittest.TestCase):
         # Rung should reset to IDLE so held crypto can be adopted
         self.assertEqual(res["rungs"]["1"]["state"], "IDLE")
         self.assertIsNone(res["rungs"]["1"]["active_order_id"])
+
+    def test_post_fill_cooldown_prevents_immediate_rebuy(self):
+        """Verify that a rung with an active post-fill cooldown does not immediately place a buy order."""
+        state = initialize_grid_state("ETHGBP")
+        # Rung 1 has an active cooldown for another 300 seconds
+        state["rungs"]["1"]["state"] = "IDLE"
+        state["rungs"]["1"]["cooldown_until"] = int(time.time()) + 300
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2000.00"), "ask": Decimal("2001.00"), "last": Decimal("2000.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("50.00")}
+        self.mock_client.place_limit_order.return_value = "TXID-BUY-R2"
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Rung 1 should remain in IDLE (cooling down), only Rung 2 should have placed an order
+        self.assertEqual(res["rungs"]["1"]["state"], "IDLE")
+        self.assertIsNone(res["rungs"]["1"].get("active_order_id"))
+        self.assertEqual(res["rungs"]["2"]["state"], "BUY_PLACED")
+
+    def test_open_sell_reprices_to_new_tight_margin(self):
+        """Verify that an open sell order placed with old wide markup re-prices closer to market."""
+        state = initialize_grid_state("ETHGBP")
+        # Open sell order with old wide target (e.g. £2030.00 when cost was £2000.00)
+        state["rungs"]["1"] = {
+            "state": "SELL_PLACED",
+            "active_order_id": "TXID-OLD-SELL",
+            "discount_pct": "0.30",
+            "target_pct": "0.40",
+            "last_buy_price": "2000.00",
+            "last_buy_volume": "0.0062",
+            "target_sell_price": "2030.00",  # old wide target
+            "order_placed_at": Decimal(str(int(time.time() - 3600))),
+        }
+
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2005.00"), "ask": Decimal("2006.00"), "last": Decimal("2005.50")}
+        self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
+        self.mock_client.query_order.return_value = {"status": "open"}
+        self.mock_client.place_limit_order.return_value = "TXID-NEW-REPRICED-SELL"
+
+        res = process_grid_pair(
+            self.pair,
+            self.mock_client,
+            self.mock_store,
+            state,
+            self.pair_decimals,
+            self.lot_decimals,
+            self.ordermin,
+            self.total_capital,
+            self.send_alert_fn,
+        )
+
+        # Old sell order should be cancelled and new re-priced sell order placed at +0.90% (£2018.00)
+        self.mock_client.cancel_order.assert_called_with("TXID-OLD-SELL")
+        self.assertEqual(res["rungs"]["1"]["active_order_id"], "TXID-NEW-REPRICED-SELL")
+        # 2000 * (1 + (0.40% + 0.50% fee)) = 2000 * 1.009 = 2018.00
+        self.assertEqual(res["rungs"]["1"]["target_sell_price"], "2018.00")
 
 
 if __name__ == "__main__":

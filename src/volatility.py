@@ -14,11 +14,11 @@ logger.setLevel(logging.INFO)
 
 def compute_volatility_target(
     candles: list[list[Any]],
-    fallback_percent: Decimal = Decimal("0.8"),
+    fallback_percent: Decimal = Decimal("0.4"),
     spread_ratio: Decimal = Decimal("0.50"),
     capture_ratio: Decimal = Decimal("0.75"),
-    min_target: Decimal = Decimal("0.8"),
-    max_target: Decimal = Decimal("1.2"),
+    min_target: Decimal = Decimal("0.35"),
+    max_target: Decimal = Decimal("0.80"),
 ) -> tuple[Decimal, dict[str, Any]]:
     """Compute dynamic profit target from recent 24-hour hourly candlestick data.
 
@@ -27,7 +27,7 @@ def compute_volatility_target(
         2. Calculate the 24h Volatility Spread % = ((24h High - 24h Low) / 24h Low) * 100.
         3. Take 50% of the spread (half-spread: typical mean-to-extreme oscillation amplitude).
         4. Target = 75% of that half-spread (capturing the core intraday wave without needing to break daily highs).
-        5. Clamp Target between min_target (0.8% to protect fees) and max_target (3.0% to keep cycles fast).
+        5. Clamp Target between min_target (0.35% to protect fees) and max_target (0.80% to keep cycles fast).
 
     Returns:
         tuple of (clamped_target_percent, stats_dict)
@@ -85,18 +85,20 @@ def compute_volatility_target(
 
 def check_market_velocity(
     candles: list[list[Any]],
-    lookback_hours: int = 3,
-    threshold_percent: Decimal = Decimal("1.8"),
+    lookback_hours: int = 2,
+    threshold_percent: Decimal = Decimal("1.2"),
 ) -> tuple[bool, Decimal, dict[str, Any]]:
     """Check if price is rapidly moving in one direction over recent hours.
 
-    Compares current price with the price `lookback_hours` ago. If the
-    absolute percentage change exceeds `threshold_percent`, flags high velocity
-    so the bot can pause placing limit buys until the market stabilizes.
+    Evaluates both multi-hour trend velocity and immediate single-hour impulse.
+    Intelligently classifies direction:
+      - FALLING_KNIFE: Rapid downside dump (> threshold% drop) -> Protects against buying falling knives.
+      - PARABOLIC_PUMP: Rapid upside spike (> threshold% surge) -> Prevents FOMO buying at the peak before pullback.
+      - FLASH_WICK: Extreme single-candle volatility spike.
 
     Args:
         candles: Hourly OHLC candle array from Kraken get_ohlc(pair, interval=60).
-        lookback_hours: Number of recent 1-hour candles to evaluate (default 3h).
+        lookback_hours: Number of recent 1-hour candles to evaluate (default 2h).
         threshold_percent: Max allowed directional change % before triggering pause.
 
     Returns:
@@ -120,33 +122,56 @@ def check_market_velocity(
         )
         abs_roc = abs(roc_percent)
 
-        # Also check single-candle extreme flash volatility in the latest 1 hour
+        # Immediate 1-hour candle analysis
         latest_candle = recent[-1]
-        latest_low = Decimal(str(latest_candle[3]))
+        latest_open = Decimal(str(latest_candle[1]))
         latest_high = Decimal(str(latest_candle[2]))
+        latest_low = Decimal(str(latest_candle[3]))
+        latest_close = Decimal(str(latest_candle[4]))
+
         latest_range_pct = Decimal("0")
         if latest_low > 0:
             latest_range_pct = (((latest_high - latest_low) / latest_low) * Decimal("100")).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
 
-        # High velocity if multi-hour trend is steep OR current hourly bar is a flash wick (> 1.3x threshold)
-        is_high_velocity = abs_roc > threshold_percent or latest_range_pct > (threshold_percent * Decimal("1.3"))
+        # 1-hour directional drop check (flash drop)
+        one_hour_roc = Decimal("0")
+        if latest_open > 0:
+            one_hour_roc = (((latest_close - latest_open) / latest_open) * Decimal("100")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+
+        # Directional classification
+        velocity_type = "CALM"
+        is_high_velocity = False
+
+        if roc_percent <= -threshold_percent or one_hour_roc <= -(threshold_percent * Decimal("0.80")):
+            velocity_type = "FALLING_KNIFE"
+            is_high_velocity = True
+        elif roc_percent >= threshold_percent or one_hour_roc >= (threshold_percent * Decimal("0.90")):
+            velocity_type = "PARABOLIC_PUMP"
+            is_high_velocity = True
+        elif latest_range_pct > (threshold_percent * Decimal("1.30")):
+            velocity_type = "FLASH_WICK"
+            is_high_velocity = True
 
         stats = {
             "start_price": str(start_price),
             "current_price": str(current_price),
             "lookback_hours": lookback_hours,
             "roc_percent": str(roc_percent),
+            "one_hour_roc": str(one_hour_roc),
             "latest_range_pct": str(latest_range_pct),
             "threshold_percent": str(threshold_percent),
+            "velocity_type": velocity_type,
             "is_high_velocity": is_high_velocity,
         }
 
         if is_high_velocity:
             logger.info(
-                "Velocity Guard Triggered: Price moved %+.2f%% over %dh (threshold: %.2f%%, 1h range: %.2f%%)",
-                roc_percent, lookback_hours, threshold_percent, latest_range_pct
+                "Velocity Guard Triggered [%s]: Price moved %+.2f%% over %dh (1h: %+.2f%%, threshold: %.2f%%, 1h range: %.2f%%)",
+                velocity_type, roc_percent, lookback_hours, one_hour_roc, threshold_percent, latest_range_pct
             )
 
         return is_high_velocity, roc_percent, stats

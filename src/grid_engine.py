@@ -20,6 +20,7 @@ from config import (
     MAX_STALE_HOURS,
     MIN_FEE_BUFFER_GBP,
     MIN_PROFIT_TARGET_PERCENT,
+    POST_FILL_COOLDOWN_MINUTES,
     PROFIT_TARGET_PERCENT,
     ROUND_TRIP_FEE_PERCENT,
     RUNG_1_MAX_DRIFT_PERCENT,
@@ -49,24 +50,33 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
 
     Thresholds:
       • Under £45.00/pair (<~£135 total): 2 rungs (50%/50%)
+          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
+          - Rung 2: Intraday Pullback Harvester (-0.90% dip, +0.50% target)
       • £45.00 - £80.00/pair (~£135-£240 total): 3 rungs (40%/35%/25%)
+          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
+          - Rung 2: Intraday Pullback Harvester (-0.80% dip, +0.50% target)
+          - Rung 3: Deep Intraday Swing (-1.50% dip, +0.60% target)
       • £80.00+/pair (>=~£240 total): 4 rungs (30%/30%/20%/20%)
+          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
+          - Rung 2: Intraday Pullback Harvester (-0.70% dip, +0.45% target)
+          - Rung 3: Medium Swing (-1.40% dip, +0.55% target)
+          - Rung 4: Macro Dip Harvester (-2.20% dip, +0.70% target)
     """
     if not DYNAMIC_RUNGS_ENABLED or pair_capital < RUNG_3_MIN_PAIR_CAPITAL_GBP:
         return [
             {
                 "rung_id": "1",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("0.80"),
-                "target_pct": Decimal("0.80"),
+                "discount_pct": Decimal("0.30"),
+                "target_pct": Decimal("0.40"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("2.40"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.90"),
+                "target_pct": Decimal("0.50"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
@@ -76,24 +86,24 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.40"),
-                "discount_pct": Decimal("0.80"),
-                "target_pct": Decimal("0.80"),
+                "discount_pct": Decimal("0.30"),
+                "target_pct": Decimal("0.40"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.35"),
-                "discount_pct": Decimal("1.80"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.80"),
+                "target_pct": Decimal("0.50"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "3",
                 "weight": Decimal("0.25"),
-                "discount_pct": Decimal("2.80"),
-                "target_pct": Decimal("1.20"),
+                "discount_pct": Decimal("1.50"),
+                "target_pct": Decimal("0.60"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
@@ -103,32 +113,32 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("0.80"),
-                "target_pct": Decimal("0.80"),
+                "discount_pct": Decimal("0.30"),
+                "target_pct": Decimal("0.40"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("1.80"),
-                "target_pct": Decimal("1.00"),
+                "discount_pct": Decimal("0.70"),
+                "target_pct": Decimal("0.45"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "3",
                 "weight": Decimal("0.20"),
-                "discount_pct": Decimal("3.00"),
-                "target_pct": Decimal("1.20"),
+                "discount_pct": Decimal("1.40"),
+                "target_pct": Decimal("0.55"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "4",
                 "weight": Decimal("0.20"),
-                "discount_pct": Decimal("5.00"),
-                "target_pct": Decimal("1.50"),
+                "discount_pct": Decimal("2.20"),
+                "target_pct": Decimal("0.70"),
                 "stale_hours": RUNG_4_MAX_STALE_HOURS,
                 "drift_pct": RUNG_4_MAX_DRIFT_PERCENT,
             },
@@ -389,36 +399,57 @@ def process_grid_pair(
             "order_placed_at": 0,
         })
 
+        # Keep active rung target and discount synchronized with cfg
+        configured_discount = Decimal(str(cfg["discount_pct"]))
+        configured_target = Decimal(str(cfg["target_pct"]))
+        rung["discount_pct"] = str(cfg["discount_pct"])
+        rung["target_pct"] = str(cfg["target_pct"])
+
         rung_state = rung.get("state", "IDLE")
         rung_capital = (total_pair_capital * cfg["weight"]).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-        discount_pct = Decimal(rung.get("discount_pct", str(cfg["discount_pct"])))
-        base_target_pct = Decimal(rung.get("target_pct", str(cfg["target_pct"])))
+        discount_pct = configured_discount
+        base_target_pct = configured_target
         target_pct = base_target_pct + dynamic_markup
 
         # -------------------------------------------------------------
         # 1. RUNG IDLE -> Submit Maker Limit Buy
         # -------------------------------------------------------------
         if rung_state == "IDLE":
+            # Check Post-Fill Cooldown: allow post-profit momentum and micro-pullbacks to develop before re-buying
+            cooldown_until = int(rung.get("cooldown_until", 0))
+            now = int(time.time())
+            if now < cooldown_until:
+                remaining_sec = cooldown_until - now
+                remaining_min = (remaining_sec + 59) // 60
+                logger.info(
+                    "[%s Rung %s] ⏳ Post-Profit Cooldown Active: %ds (~%dm) remaining to let price settle after sell fill.",
+                    pair, rung_id, remaining_sec, remaining_min
+                )
+                continue
+
             # Check Velocity Guard: if price is moving rapidly in one direction, pause placing buys
             if VELOCITY_FILTER_ENABLED and candles:
-                is_rapid, roc_pct, _ = check_market_velocity(
+                is_rapid, roc_pct, vel_stats = check_market_velocity(
                     candles,
                     lookback_hours=VELOCITY_LOOKBACK_HOURS,
                     threshold_percent=VELOCITY_MAX_CHANGE_PERCENT,
                 )
                 if is_rapid:
+                    vel_type = vel_stats.get("velocity_type", "HIGH_VELOCITY")
                     logger.info(
-                        "[%s Rung %s] ⏳ Velocity Guard Active: Price moved %+.2f%% in last %dh (threshold: %.2f%%). Pausing buy placement until market stabilizes.",
-                        pair, rung_id, roc_pct, VELOCITY_LOOKBACK_HOURS, float(VELOCITY_MAX_CHANGE_PERCENT)
+                        "[%s Rung %s] ⏳ Velocity Guard Active (%s): Price moved %+.2f%% in last %dh (threshold: %.2f%%). Pausing buy placement until market stabilizes.",
+                        pair, rung_id, vel_type, roc_pct, VELOCITY_LOOKBACK_HOURS, float(VELOCITY_MAX_CHANGE_PERCENT)
                     )
                     rung["velocity_paused"] = True
                     rung["velocity_roc_pct"] = str(roc_pct)
+                    rung["velocity_type"] = vel_type
                     state_changed = True
                     continue
                 else:
                     if rung.get("velocity_paused"):
                         rung["velocity_paused"] = False
                         rung.pop("velocity_roc_pct", None)
+                        rung.pop("velocity_type", None)
                         state_changed = True
 
             raw_buy_price = best_bid * (Decimal("1") - (discount_pct / Decimal("100")))
@@ -526,6 +557,14 @@ def process_grid_pair(
                     if capital_ratio < UNDERSIZED_THRESHOLD_PERCENT and available_cash >= (rung_capital * Decimal("0.80")):
                         is_undersized = True
 
+                # 4. Grid Alignment Detection: Was order placed with an outdated wide discount?
+                is_misaligned = False
+                current_order_discount = Decimal("0")
+                if order_buy_price > Decimal("0") and best_bid > Decimal("0"):
+                    current_order_discount = ((best_bid - order_buy_price) / best_bid) * Decimal("100")
+                    if current_order_discount >= (discount_pct + Decimal("0.35")):
+                        is_misaligned = True
+
                 cancel_reason = None
                 if is_stale:
                     cancel_reason = f"Stale ({order_age_hours:.1f}h > {stale_threshold}h limit)"
@@ -533,6 +572,8 @@ def process_grid_pair(
                     cancel_reason = f"Price drift (Market +{drift_pct:.2f}% above order > {drift_threshold}% limit)"
                 elif is_undersized:
                     cancel_reason = f"Undersized capital (£{order_capital:.2f} vs target £{rung_capital:.2f}) and cash is now available"
+                elif is_misaligned:
+                    cancel_reason = f"Grid alignment: Order placed at -{current_order_discount:.2f}% dip, re-aligning to active grid discount of -{discount_pct:.2f}%"
 
                 if cancel_reason:
                     logger.info(
@@ -624,9 +665,10 @@ def process_grid_pair(
                     pair, rung_id, net_profit, total_profit, total_trades
                 )
 
-                # Reset rung to IDLE to immediately re-enter on next cycle
+                # Reset rung to IDLE and activate post-profit cooldown to let momentum settle before re-entering a buy
                 rung["state"] = "IDLE"
                 rung["active_order_id"] = None
+                rung["cooldown_until"] = int(time.time()) + (POST_FILL_COOLDOWN_MINUTES * 60)
                 state_changed = True
                 store.save_state(state)
 
@@ -637,8 +679,46 @@ def process_grid_pair(
                     f"• Net Profit Realized: +£{net_profit:.2f}\n"
                     f"• Lifetime Pair Profit: +£{total_profit:.2f} across {total_trades} cycles\n"
                     f"• Sold: {volume} {pair[:3]} @ £{sell_price:.2f}\n\n"
-                    f"The rung has reset and will place a fresh buy order on the next iteration.",
+                    f"The rung has entered a {POST_FILL_COOLDOWN_MINUTES}-minute cooldown to let price settle before placing the next buy.",
                 )
+
+            elif status == "open":
+                # Smart Sell Acceleration: If target profit setting was lowered, re-price the sell order
+                # closer to market to accelerate cycle fill (strictly maintaining net profit after fees).
+                last_buy = Decimal(str(rung.get("last_buy_price", "0")))
+                current_target_sell = Decimal(str(rung.get("target_sell_price", "0")))
+                order_vol = Decimal(str(rung.get("last_buy_volume", "0")))
+
+                if last_buy > Decimal("0") and current_target_sell > Decimal("0") and order_vol >= ordermin:
+                    total_markup = Decimal("1") + ((target_pct + ROUND_TRIP_FEE_PERCENT) / Decimal("100"))
+                    raw_new_sell = last_buy * total_markup
+                    new_sell_price = _round_decimal(raw_new_sell, pair_decimals, rounding=ROUND_HALF_UP)
+
+                    tick_step = Decimal(10) ** -pair_decimals
+                    best_ask = ticker.get("ask", best_bid)
+                    if new_sell_price <= best_bid:
+                        new_sell_price = best_bid + tick_step
+                    new_sell_price = max(new_sell_price, best_ask)
+
+                    break_even_floor = last_buy * (Decimal("1") + (ROUND_TRIP_FEE_PERCENT / Decimal("100")))
+                    min_price_delta = tick_step * Decimal("2")
+
+                    if (current_target_sell - new_sell_price) >= min_price_delta and new_sell_price > break_even_floor:
+                        logger.info(
+                            "[%s Rung %s] Accelerating cycle: Re-pricing open sell order %s from £%s down to £%s (+%s%% net target) to match active target",
+                            pair, rung_id, txid, current_target_sell, new_sell_price, target_pct
+                        )
+                        try:
+                            client.cancel_order(txid)
+                            new_txid = client.place_limit_order(pair, "sell", order_vol, new_sell_price, post_only=True)
+                            rung["active_order_id"] = new_txid
+                            rung["target_sell_price"] = str(new_sell_price)
+                            rung["applied_target_pct"] = str(target_pct)
+                            rung["order_placed_at"] = int(time.time())
+                            state_changed = True
+                            store.save_state(state)
+                        except Exception as e:
+                            logger.warning("[%s Rung %s] Failed to re-price sell order %s: %s", pair, rung_id, txid, e)
 
             elif status in ("canceled", "expired"):
                 logger.warning(
