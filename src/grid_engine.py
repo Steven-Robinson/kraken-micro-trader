@@ -50,33 +50,33 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
 
     Thresholds:
       • Under £45.00/pair (<~£135 total): 2 rungs (50%/50%)
-          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
-          - Rung 2: Intraday Pullback Harvester (-0.90% dip, +0.50% target)
+          - Rung 1: Primary Swing Harvester (-3.50% dip, +3.50% target)
+          - Rung 2: Deep Pullback Harvester (-7.50% dip, +6.00% target)
       • £45.00 - £80.00/pair (~£135-£240 total): 3 rungs (40%/35%/25%)
-          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
-          - Rung 2: Intraday Pullback Harvester (-0.80% dip, +0.50% target)
-          - Rung 3: Deep Intraday Swing (-1.50% dip, +0.60% target)
+          - Rung 1: Primary Swing Harvester (-3.00% dip, +3.00% target)
+          - Rung 2: Medium Pullback Harvester (-6.50% dip, +5.00% target)
+          - Rung 3: Deep Macro Swing (-10.00% dip, +7.50% target)
       • £80.00+/pair (>=~£240 total): 4 rungs (30%/30%/20%/20%)
-          - Rung 1: Fast Intraday Micro-Scalper (-0.30% dip, +0.40% target)
-          - Rung 2: Intraday Pullback Harvester (-0.70% dip, +0.45% target)
-          - Rung 3: Medium Swing (-1.40% dip, +0.55% target)
-          - Rung 4: Macro Dip Harvester (-2.20% dip, +0.70% target)
+          - Rung 1: Primary Swing Harvester (-2.50% dip, +2.50% target)
+          - Rung 2: Medium Pullback Harvester (-5.50% dip, +4.50% target)
+          - Rung 3: Deep Macro Swing (-9.00% dip, +6.50% target)
+          - Rung 4: Capitulation Dip Harvester (-14.00% dip, +9.00% target)
     """
     if not DYNAMIC_RUNGS_ENABLED or pair_capital < RUNG_3_MIN_PAIR_CAPITAL_GBP:
         return [
             {
                 "rung_id": "1",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("0.30"),
-                "target_pct": Decimal("0.40"),
+                "discount_pct": Decimal("3.50"),
+                "target_pct": Decimal("3.50"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.50"),
-                "discount_pct": Decimal("0.90"),
-                "target_pct": Decimal("0.50"),
+                "discount_pct": Decimal("7.50"),
+                "target_pct": Decimal("6.00"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
@@ -86,24 +86,24 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.40"),
-                "discount_pct": Decimal("0.30"),
-                "target_pct": Decimal("0.40"),
+                "discount_pct": Decimal("3.00"),
+                "target_pct": Decimal("3.00"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.35"),
-                "discount_pct": Decimal("0.80"),
-                "target_pct": Decimal("0.50"),
+                "discount_pct": Decimal("6.50"),
+                "target_pct": Decimal("5.00"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "3",
                 "weight": Decimal("0.25"),
-                "discount_pct": Decimal("1.50"),
-                "target_pct": Decimal("0.60"),
+                "discount_pct": Decimal("10.00"),
+                "target_pct": Decimal("7.50"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
@@ -113,32 +113,32 @@ def get_rungs_config(pair_capital: Decimal) -> list[dict[str, Any]]:
             {
                 "rung_id": "1",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("0.30"),
-                "target_pct": Decimal("0.40"),
+                "discount_pct": Decimal("2.50"),
+                "target_pct": Decimal("2.50"),
                 "stale_hours": RUNG_1_MAX_STALE_HOURS,
                 "drift_pct": RUNG_1_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "2",
                 "weight": Decimal("0.30"),
-                "discount_pct": Decimal("0.70"),
-                "target_pct": Decimal("0.45"),
+                "discount_pct": Decimal("5.50"),
+                "target_pct": Decimal("4.50"),
                 "stale_hours": RUNG_2_MAX_STALE_HOURS,
                 "drift_pct": RUNG_2_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "3",
                 "weight": Decimal("0.20"),
-                "discount_pct": Decimal("1.40"),
-                "target_pct": Decimal("0.55"),
+                "discount_pct": Decimal("9.00"),
+                "target_pct": Decimal("6.50"),
                 "stale_hours": RUNG_3_MAX_STALE_HOURS,
                 "drift_pct": RUNG_3_MAX_DRIFT_PERCENT,
             },
             {
                 "rung_id": "4",
                 "weight": Decimal("0.20"),
-                "discount_pct": Decimal("2.20"),
-                "target_pct": Decimal("0.70"),
+                "discount_pct": Decimal("14.00"),
+                "target_pct": Decimal("9.00"),
                 "stale_hours": RUNG_4_MAX_STALE_HOURS,
                 "drift_pct": RUNG_4_MAX_DRIFT_PERCENT,
             },
@@ -562,7 +562,7 @@ def process_grid_pair(
                 current_order_discount = Decimal("0")
                 if order_buy_price > Decimal("0") and best_bid > Decimal("0"):
                     current_order_discount = ((best_bid - order_buy_price) / best_bid) * Decimal("100")
-                    if current_order_discount >= (discount_pct + Decimal("0.35")):
+                    if current_order_discount >= (discount_pct + Decimal("1.00")):
                         is_misaligned = True
 
                 cancel_reason = None

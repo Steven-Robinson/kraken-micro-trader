@@ -63,13 +63,13 @@ class TestGridEngine(unittest.TestCase):
         rungs = res["rungs"]
         self.assertEqual(rungs["1"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["1"]["active_order_id"], "TXID-BUY-R1")
-        # Rung 1 buy price: 2000 * (1 - 0.003) = 1994.00
-        self.assertEqual(rungs["1"]["last_buy_price"], "1994.00")
+        # Rung 1 buy price: 2000 * (1 - 0.035) = 1930.00
+        self.assertEqual(rungs["1"]["last_buy_price"], "1930.00")
 
         self.assertEqual(rungs["2"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["2"]["active_order_id"], "TXID-BUY-R2")
-        # Rung 2 buy price: 2000 * (1 - 0.009) = 1982.00
-        self.assertEqual(rungs["2"]["last_buy_price"], "1982.00")
+        # Rung 2 buy price: 2000 * (1 - 0.075) = 1850.00
+        self.assertEqual(rungs["2"]["last_buy_price"], "1850.00")
 
         self.assertTrue(self.mock_store.save_state.called)
 
@@ -125,8 +125,8 @@ class TestGridEngine(unittest.TestCase):
         # Rung 1 should now be SELL_PLACED
         self.assertEqual(rungs["1"]["state"], "SELL_PLACED")
         self.assertEqual(rungs["1"]["active_order_id"], "TXID-SELL-R1")
-        # Target sell price markup: 1988 * (1 + (0.40% target + 0.5% fee)) = 1988 * 1.009 = 2005.89
-        self.assertEqual(rungs["1"]["target_sell_price"], "2005.89")
+        # Target sell price markup: 1988 * (1 + (3.50% target + 0.5% fee)) = 1988 * 1.040 = 2067.52
+        self.assertEqual(rungs["1"]["target_sell_price"], "2067.52")
 
         # Rung 2 should remain BUY_PLACED
         self.assertEqual(rungs["2"]["state"], "BUY_PLACED")
@@ -277,8 +277,8 @@ class TestGridEngine(unittest.TestCase):
             "target_sell_price": "0.0",
             "order_placed_at": Decimal(str(int(time.time() - 1800))),  # only 30m old
         }
-        # Market has rallied to £2040.00 (+2.0% above £2000.00 limit buy > 1.5% limit)
-        self.mock_client.get_ticker.return_value = {"bid": Decimal("2040.00"), "ask": Decimal("2041.00"), "last": Decimal("2040.50")}
+        # Market has rallied to £2080.00 (+4.0% above £2000.00 limit buy > 3.5% limit)
+        self.mock_client.get_ticker.return_value = {"bid": Decimal("2080.00"), "ask": Decimal("2081.00"), "last": Decimal("2080.50")}
         self.mock_client.get_balance.return_value = {"ZGBP": Decimal("20.00")}
         self.mock_client.query_order.return_value = {"status": "open"}
         self.mock_client.get_open_orders.return_value = {}
@@ -348,7 +348,7 @@ class TestGridEngine(unittest.TestCase):
         self.assertEqual(cfg_3[2]["rung_id"], "3")
         self.assertEqual(cfg_3[0]["weight"] + cfg_3[1]["weight"] + cfg_3[2]["weight"], Decimal("1.00"))
         # Rung 3 targets a deeper dip
-        self.assertEqual(cfg_3[2]["discount_pct"], Decimal("1.50"))
+        self.assertEqual(cfg_3[2]["discount_pct"], Decimal("10.00"))
 
         # 3. £80+ -> 4 rungs
         cfg_4 = get_rungs_config(Decimal("100.00"))
@@ -410,8 +410,8 @@ class TestGridEngine(unittest.TestCase):
         self.assertIn("3", rungs)
         self.assertEqual(rungs["3"]["state"], "BUY_PLACED")
         self.assertEqual(rungs["3"]["active_order_id"], "TXID-BUY-R3")
-        # Rung 3 discount is 1.50%: 2000 * (1 - 0.015) = 1970.00
-        self.assertEqual(rungs["3"]["last_buy_price"], "1970.00")
+        # Rung 3 discount is 10.00%: 2000 * (1 - 0.10) = 1800.00
+        self.assertEqual(rungs["3"]["last_buy_price"], "1800.00")
 
     def test_dynamic_scaling_preserves_sell_order_when_capital_downscales(self):
         """Verify that if capital drops, a decommissioned rung in SELL_PLACED is preserved until fill."""
@@ -463,11 +463,11 @@ class TestGridEngine(unittest.TestCase):
         self.mock_client.get_balance.return_value = {"ZGBP": Decimal("50.00")}
         self.mock_client.get_open_orders.return_value = {}
 
-        # 1. Rapid rally candles: 2000 -> 2060 (+3.0% > 1.8% threshold)
+        # 1. Rapid rally candles: 2000 -> 2080 (+4.0% > 3.0% threshold)
         surge_candles = [
             [1700000000, "2000.0", "2020.0", "1995.0", "2015.0", "2010.5", "10", 5],
             [1700003600, "2015.0", "2040.0", "2010.0", "2038.0", "2025.5", "10", 5],
-            [1700007200, "2038.0", "2065.0", "2035.0", "2060.0", "2050.0", "10", 5],
+            [1700007200, "2038.0", "2085.0", "2035.0", "2080.0", "2060.0", "10", 5],
         ]
         self.mock_client.get_ohlc.return_value = surge_candles
 
@@ -525,7 +525,7 @@ class TestGridEngine(unittest.TestCase):
             "last_buy_price": "2000.00",
             "last_buy_volume": "0.0100",
             "target_sell_price": "0.0",
-            "order_placed_at": Decimal(str(int(time.time() - 36000))),  # 10h old (>4h stale!)
+            "order_placed_at": Decimal(str(int(time.time() - 54000))),  # 15h old (>12h stale!)
         }
 
         self.mock_client.get_ticker.return_value = {"bid": Decimal("2005.00"), "ask": Decimal("2006.00"), "last": Decimal("2005.50")}
@@ -622,15 +622,15 @@ class TestGridEngine(unittest.TestCase):
     def test_open_sell_reprices_to_new_tight_margin(self):
         """Verify that an open sell order placed with old wide markup re-prices closer to market."""
         state = initialize_grid_state("ETHGBP")
-        # Open sell order with old wide target (e.g. £2030.00 when cost was £2000.00)
+        # Open sell order with old wide target (e.g. £2150.00 when cost was £2000.00)
         state["rungs"]["1"] = {
             "state": "SELL_PLACED",
             "active_order_id": "TXID-OLD-SELL",
-            "discount_pct": "0.30",
-            "target_pct": "0.40",
+            "discount_pct": "3.50",
+            "target_pct": "3.50",
             "last_buy_price": "2000.00",
             "last_buy_volume": "0.0062",
-            "target_sell_price": "2030.00",  # old wide target
+            "target_sell_price": "2150.00",  # old wide target
             "order_placed_at": Decimal(str(int(time.time() - 3600))),
         }
 
@@ -651,11 +651,11 @@ class TestGridEngine(unittest.TestCase):
             self.send_alert_fn,
         )
 
-        # Old sell order should be cancelled and new re-priced sell order placed at +0.90% (£2018.00)
+        # Old sell order should be cancelled and new re-priced sell order placed at +4.00% (£2080.00)
         self.mock_client.cancel_order.assert_called_with("TXID-OLD-SELL")
         self.assertEqual(res["rungs"]["1"]["active_order_id"], "TXID-NEW-REPRICED-SELL")
-        # 2000 * (1 + (0.40% + 0.50% fee)) = 2000 * 1.009 = 2018.00
-        self.assertEqual(res["rungs"]["1"]["target_sell_price"], "2018.00")
+        # 2000 * (1 + (3.50% + 0.50% fee)) = 2000 * 1.040 = 2080.00
+        self.assertEqual(res["rungs"]["1"]["target_sell_price"], "2080.00")
 
 
 if __name__ == "__main__":

@@ -14,11 +14,11 @@ logger.setLevel(logging.INFO)
 
 def compute_volatility_target(
     candles: list[list[Any]],
-    fallback_percent: Decimal = Decimal("0.4"),
+    fallback_percent: Decimal = Decimal("2.0"),
     spread_ratio: Decimal = Decimal("0.50"),
     capture_ratio: Decimal = Decimal("0.75"),
-    min_target: Decimal = Decimal("0.35"),
-    max_target: Decimal = Decimal("0.80"),
+    min_target: Decimal = Decimal("1.50"),
+    max_target: Decimal = Decimal("4.00"),
 ) -> tuple[Decimal, dict[str, Any]]:
     """Compute dynamic profit target from recent 24-hour hourly candlestick data.
 
@@ -27,7 +27,7 @@ def compute_volatility_target(
         2. Calculate the 24h Volatility Spread % = ((24h High - 24h Low) / 24h Low) * 100.
         3. Take 50% of the spread (half-spread: typical mean-to-extreme oscillation amplitude).
         4. Target = 75% of that half-spread (capturing the core intraday wave without needing to break daily highs).
-        5. Clamp Target between min_target (0.35% to protect fees) and max_target (0.80% to keep cycles fast).
+        5. Clamp Target between min_target (1.50%) and max_target (4.00%).
 
     Returns:
         tuple of (clamped_target_percent, stats_dict)
@@ -86,7 +86,7 @@ def compute_volatility_target(
 def check_market_velocity(
     candles: list[list[Any]],
     lookback_hours: int = 2,
-    threshold_percent: Decimal = Decimal("1.2"),
+    threshold_percent: Decimal = Decimal("3.0"),
 ) -> tuple[bool, Decimal, dict[str, Any]]:
     """Check if price is rapidly moving in one direction over recent hours.
 

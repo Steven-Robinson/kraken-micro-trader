@@ -33,15 +33,15 @@ MIN_FEE_BUFFER_GBP = Decimal(os.getenv("MIN_FEE_BUFFER_GBP", "2.00"))  # Minimum
 FEE_BUFFER_PERCENT = Decimal(os.getenv("FEE_BUFFER_PERCENT", "3.0"))   # % buffer on larger balances
 
 # Target gross profit percentage per round trip (static baseline / fallback)
-PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "0.4"))
+PROFIT_TARGET_PERCENT = Decimal(os.getenv("PROFIT_TARGET_PERCENT", "3.5"))
 
 # Dynamic ATR Volatility Engine
 DYNAMIC_TARGET_ENABLED = os.getenv("DYNAMIC_TARGET_ENABLED", "true").lower() in ("true", "1", "yes")
-MIN_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MIN_PROFIT_TARGET_PERCENT", "0.35"))
-MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "0.80"))
+MIN_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MIN_PROFIT_TARGET_PERCENT", "1.50"))
+MAX_PROFIT_TARGET_PERCENT = Decimal(os.getenv("MAX_PROFIT_TARGET_PERCENT", "4.00"))
 
-# Discount below current market price for limit buy orders (0.1% - 0.3% ensures Maker status)
-BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "0.2"))
+# Discount below current market price for limit buy orders
+BUY_DISCOUNT_PERCENT = Decimal(os.getenv("BUY_DISCOUNT_PERCENT", "3.5"))
 
 # Dynamic Grid Rungs Configuration (Auto-scaling rungs by capital)
 DYNAMIC_RUNGS_ENABLED = os.getenv("DYNAMIC_RUNGS_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -49,17 +49,17 @@ RUNG_3_MIN_PAIR_CAPITAL_GBP = Decimal(os.getenv("RUNG_3_MIN_PAIR_CAPITAL_GBP", "
 RUNG_4_MIN_PAIR_CAPITAL_GBP = Decimal(os.getenv("RUNG_4_MIN_PAIR_CAPITAL_GBP", "80.00"))
 
 # Hours before an unfilled limit buy order is considered stale and re-evaluated
-RUNG_1_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_1_MAX_STALE_HOURS", "2.0"))
-RUNG_2_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_2_MAX_STALE_HOURS", "8.0"))
-RUNG_3_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_3_MAX_STALE_HOURS", "24.0"))
-RUNG_4_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_4_MAX_STALE_HOURS", "48.0"))
+RUNG_1_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_1_MAX_STALE_HOURS", "12.0"))
+RUNG_2_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_2_MAX_STALE_HOURS", "48.0"))
+RUNG_3_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_3_MAX_STALE_HOURS", "72.0"))
+RUNG_4_MAX_STALE_HOURS = Decimal(os.getenv("RUNG_4_MAX_STALE_HOURS", "96.0"))
 MAX_STALE_HOURS = RUNG_2_MAX_STALE_HOURS  # Backwards compatibility fallback
 
 # Price drift threshold: if market rallies above limit buy order, cancel and re-quote to follow the trend
-RUNG_1_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_1_MAX_DRIFT_PERCENT", "1.0"))
-RUNG_2_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_2_MAX_DRIFT_PERCENT", "2.0"))
-RUNG_3_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_3_MAX_DRIFT_PERCENT", "3.5"))
-RUNG_4_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_4_MAX_DRIFT_PERCENT", "5.0"))
+RUNG_1_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_1_MAX_DRIFT_PERCENT", "3.5"))
+RUNG_2_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_2_MAX_DRIFT_PERCENT", "7.0"))
+RUNG_3_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_3_MAX_DRIFT_PERCENT", "10.0"))
+RUNG_4_MAX_DRIFT_PERCENT = Decimal(os.getenv("RUNG_4_MAX_DRIFT_PERCENT", "14.0"))
 
 # Auto-resize threshold: if order capital is severely undersized (<60% target) and cash is free, refresh it
 UNDERSIZED_THRESHOLD_PERCENT = Decimal(os.getenv("UNDERSIZED_THRESHOLD_PERCENT", "0.60"))
@@ -67,10 +67,10 @@ UNDERSIZED_THRESHOLD_PERCENT = Decimal(os.getenv("UNDERSIZED_THRESHOLD_PERCENT",
 # Trend Velocity Guard: Pauses placing new buy orders if price is moving rapidly in one direction
 VELOCITY_FILTER_ENABLED = os.getenv("VELOCITY_FILTER_ENABLED", "true").lower() in ("true", "1", "yes")
 VELOCITY_LOOKBACK_HOURS = int(os.getenv("VELOCITY_LOOKBACK_HOURS", "2"))
-VELOCITY_MAX_CHANGE_PERCENT = Decimal(os.getenv("VELOCITY_MAX_CHANGE_PERCENT", "1.2"))
+VELOCITY_MAX_CHANGE_PERCENT = Decimal(os.getenv("VELOCITY_MAX_CHANGE_PERCENT", "3.0"))
 
 # Post-Fill Cooldown: Brief rest period (minutes) after a sell fill to let momentum settle before re-buying
-POST_FILL_COOLDOWN_MINUTES = int(os.getenv("POST_FILL_COOLDOWN_MINUTES", "6"))
+POST_FILL_COOLDOWN_MINUTES = int(os.getenv("POST_FILL_COOLDOWN_MINUTES", "15"))
 
 # Estimated round-trip Maker fee (Kraken Pro: 0.25% buy + 0.25% sell = 0.50%)
 ROUND_TRIP_FEE_PERCENT = Decimal(os.getenv("ROUND_TRIP_FEE_PERCENT", "0.50"))

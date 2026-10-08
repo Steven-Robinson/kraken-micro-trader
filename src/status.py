@@ -109,7 +109,7 @@ def display_pair_status(pair: str):
         rungs = state.get("rungs", {})
         sorted_rids = sorted(rungs.keys(), key=lambda x: int(x) if x.isdigit() else 99)
         active_count = len(sorted_rids)
-        print(f"  Strategy Mode:     {BOLD}{CYAN}{active_count}-RUNG DYNAMIC MICRO-GRID (Compounding Intraday Dips){RESET}")
+        print(f"  Strategy Mode:     {BOLD}{CYAN}{active_count}-RUNG WIDE-GRID SWING HARVESTER{RESET}")
         for rid in sorted_rids:
             rdata = rungs.get(rid, {})
             r_state = rdata.get("state", "IDLE")
@@ -181,13 +181,14 @@ def display_pair_status(pair: str):
     try:
         from kraken_client import KrakenClient
         from volatility import compute_volatility_target
+        from config import MIN_PROFIT_TARGET_PERCENT, MAX_PROFIT_TARGET_PERCENT
         client = KrakenClient()
         candles = client.get_ohlc(pair, interval=60)
         target_pct, stats = compute_volatility_target(candles)
         low_p = Decimal(str(stats.get('low_24h', '0')))
         high_p = Decimal(str(stats.get('high_24h', '0')))
         print(f"  24h Volatility:    {BOLD}{stats.get('swing_24h_pct', 'N/A')}{RESET} (£{low_p:,.2f} - £{high_p:,.2f})")
-        print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: 0.35% - 0.80%)")
+        print(f"  Dynamic Target:    {BOLD}{GREEN}+{Decimal(str(target_pct)):.2f}%{RESET} (Range: {MIN_PROFIT_TARGET_PERCENT:.2f}% - {MAX_PROFIT_TARGET_PERCENT:.2f}%)")
     except Exception:
         pass
 
