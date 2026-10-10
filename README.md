@@ -2,6 +2,15 @@
 
 An institutional-grade, zero-cloud-cost (**£0.00/month** perpetual free tier) algorithmic trading platform executing a **2-Rung Micro-Grid Maker** strategy directly in **Pounds Sterling (£ GBP)** on **Kraken Pro** across major cryptocurrency pairs (`SOL/GBP`, `ETH/GBP`, `BTC/GBP`).
 
+> [!CAUTION]
+> ### ⚠️ Financial Risk & Legal Disclaimer
+> This software is published for **educational, algorithmic research, and technical demonstration purposes only**. Nothing in this repository constitutes investment, financial, tax, or legal advice.
+>
+> * **High Risk of Loss:** Algorithmic cryptocurrency trading carries substantial risks, including the complete loss of invested capital. Cryptocurrency markets are highly volatile and unpredictable.
+> * **No Guarantee of Profit:** Past or simulated performance does not guarantee future results.
+> * **No Liability:** The authors and contributors accept no responsibility or liability for any financial losses, trading errors, execution failures, API outages, or unexpected behavior arising from the use of this software.
+> * **Personal Responsibility:** Any user who deploys this bot with real capital does so entirely at their own discretion and risk. Always test thoroughly in simulation (`DRY_RUN = true`) first.
+
 ---
 
 ## 📚 Plain-English Beginner Guide
@@ -149,3 +158,9 @@ PYTHONPATH=src python3 -m unittest discover -s tests -p "test_*.py"
 2. **Encrypted Parameter Storage:** Kraken API keys are stored in AWS Systems Manager (SSM) Parameter Store as `SecureString` types encrypted with AWS KMS.
 3. **No Open Inbound Ports:** The bot runs serverlessly in AWS Lambda without exposing any open ports or listening services.
 4. **Permanent Fee Protection:** Neither market volatility nor balance fluctuations can deplete your trading fee cash floor.
+
+---
+
+## 7. License
+
+This project is licensed under the terms of the [MIT License](LICENSE).

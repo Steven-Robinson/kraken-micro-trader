@@ -1,21 +1,19 @@
-# Project State & Multi-Machine Handoff Guide
+# Developer Setup & Multi-Machine Handoff Guide
 
-This file allows you (and any AI assistant on your MacBook or other machines) to immediately resume work on the **Kraken Autonomous Micro-Grid Trader** without losing any context.
+This file provides instructions for setting up and resuming development on the **Kraken Autonomous Micro-Grid Trader** across developer workstations.
 
 ---
 
-## 1. Quick Resume Prompt for Your MacBook
-When you open this project on your work MacBook in Antigravity or any AI assistant, just paste this single prompt:
+## 1. Quick Resume Prompt for AI Assistant
+When resuming development in an AI coding assistant:
 
 > *"Please read `HANDOFF.md` and run `python3 src/status.py` to pick up our work on the Kraken micro-grid bot."*
 
-The AI will immediately know the entire system state, architecture, and current live orders.
-
 ---
 
-## 2. Infrastructure & Live System State
+## 2. Infrastructure Architecture
 
-The bot runs **100% serverless in AWS Dublin (`eu-west-1`)**, not on your local computer. Your Mac Mini and MacBook are simply remote-control dashboards.
+The bot runs **100% serverlessly in AWS (`eu-west-1`)**. Local workstations function as remote-control dashboards and testing environments.
 
 ```
 Total Portfolio Equity: ~£78.51 (Free Cash: £19.79 | Unified Kraken Pro Account)
@@ -36,19 +34,18 @@ Total Portfolio Equity: ~£78.51 (Free Cash: £19.79 | Unified Kraken Pro Accoun
 
 ---
 
-## 3. Machine Setup Checklist (For Your Work MacBook)
+## 3. Workstation Setup Checklist
 
-To control and inspect the system from your work MacBook, you only need 3 quick steps:
+To control and inspect the system locally, follow these 3 steps:
 
 ### Step 1: Clone or Pull the Git Repository
 ```bash
 git clone https://github.com/Steven-Robinson/kraken-micro-trader.git
 cd kraken-micro-trader
 ```
-*(If already cloned on your MacBook, simply run: `git pull origin main`)*
 
 ### Step 2: Configure AWS Credentials
-Ensure your work MacBook has AWS CLI access to the same AWS account (`eu-west-1`):
+Ensure your workstation has AWS CLI access to your AWS account (`eu-west-1`):
 ```bash
 aws configure
 # Default region: eu-west-1

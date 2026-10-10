@@ -120,7 +120,7 @@ Here is the exact sequence of events that just happened on our live system:
   • With 0.50% round-trip fee allowance, target sell price = £63,909.60.
 
 [Step 4: The Resting Sell Order]
-  • Bot immediately posted Maker sell order O4MFXV-W3O5W-YFEZQ3 @ £63,909.60.
+  • Bot immediately posted Maker sell order ORDER-SELL-EXAMPLE @ £63,909.60.
   • The bot is now waiting patiently on Kraken's order book.
 
 [Step 5: When It Fills]
