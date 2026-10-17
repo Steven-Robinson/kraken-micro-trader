@@ -1,0 +1,22 @@
+name: "Infrastructure Deployment"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infra.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    uses: Steven-Robinson/github-workflows/.github/workflows/tofu-pipeline.yml@main
+    secrets: inherit
+    with:
+      working_directory: "terraform"
+      aws_region: "eu-west-1"

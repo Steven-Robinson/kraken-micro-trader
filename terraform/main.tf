@@ -1,5 +1,12 @@
 terraform {
   required_version = ">= 1.5.0"
+
+  backend "s3" {
+    key          = "kraken-micro-trader/terraform.tfstate"
+    region       = "eu-west-1"
+    encrypt      = true
+    use_lockfile = true
+  }
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -156,23 +163,23 @@ resource "aws_lambda_function" "crypto_bot" {
 
   environment {
     variables = {
-      DRY_RUN               = tostring(var.dry_run)
-      TRADING_PAIR          = var.trading_pair
-      TRADING_PAIRS         = var.trading_pairs
-      BOT_ID                = var.bot_id
-      ALLOCATED_CAPITAL_GBP = var.allocated_capital_gbp
-      PROFIT_TARGET_PERCENT = var.profit_target_percent
-      BUY_DISCOUNT_PERCENT  = var.buy_discount_percent
-      DYNAMODB_TABLE        = aws_dynamodb_table.bot_state.name
-      SSM_PARAM_API_KEY         = "/crypto-bot/kraken-api-key"
-      SSM_PARAM_API_SECRET      = "/crypto-bot/kraken-api-secret"
-      SNS_TOPIC_ARN             = aws_sns_topic.trade_alerts.arn
-      DYNAMIC_TARGET_ENABLED    = tostring(var.dynamic_target_enabled)
-      MIN_PROFIT_TARGET_PERCENT = var.min_profit_target_percent
-      MAX_PROFIT_TARGET_PERCENT = var.max_profit_target_percent
-      DYNAMIC_CAPITAL_ENABLED   = tostring(var.dynamic_capital_enabled)
-      MIN_FEE_BUFFER_GBP        = var.min_fee_buffer_gbp
-      FEE_BUFFER_PERCENT        = var.fee_buffer_percent
+      DRY_RUN                    = tostring(var.dry_run)
+      TRADING_PAIR               = var.trading_pair
+      TRADING_PAIRS              = var.trading_pairs
+      BOT_ID                     = var.bot_id
+      ALLOCATED_CAPITAL_GBP      = var.allocated_capital_gbp
+      PROFIT_TARGET_PERCENT      = var.profit_target_percent
+      BUY_DISCOUNT_PERCENT       = var.buy_discount_percent
+      DYNAMODB_TABLE             = aws_dynamodb_table.bot_state.name
+      SSM_PARAM_API_KEY          = "/crypto-bot/kraken-api-key"
+      SSM_PARAM_API_SECRET       = "/crypto-bot/kraken-api-secret"
+      SNS_TOPIC_ARN              = aws_sns_topic.trade_alerts.arn
+      DYNAMIC_TARGET_ENABLED     = tostring(var.dynamic_target_enabled)
+      MIN_PROFIT_TARGET_PERCENT  = var.min_profit_target_percent
+      MAX_PROFIT_TARGET_PERCENT  = var.max_profit_target_percent
+      DYNAMIC_CAPITAL_ENABLED    = tostring(var.dynamic_capital_enabled)
+      MIN_FEE_BUFFER_GBP         = var.min_fee_buffer_gbp
+      FEE_BUFFER_PERCENT         = var.fee_buffer_percent
       POST_FILL_COOLDOWN_MINUTES = var.post_fill_cooldown_minutes
     }
   }
